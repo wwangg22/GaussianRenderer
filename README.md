@@ -37,3 +37,6 @@ This project focuses on building a high-performance Gaussian Renderer with suppo
 - Dependencies: CUDA / OpenGL / Vulkan (TBD)  
 - Risks: Optimization complexity, GPU compatibility  
 - Future Work: Multi-GPU scaling, neural field integration  
+
+
+"C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"

@@ -1,0 +1,2 @@
+add_executable(radix_test radix_test.cpp)
+target_link_libraries(radix_test cuda_kernels)
