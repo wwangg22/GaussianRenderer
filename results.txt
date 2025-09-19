@@ -1,0 +1,13 @@
+Iteration 1
+
+N = 2^22
+Blocks = 1
+Max Threads = 256
+Max Val = 2^24 - 1
+
+CPU stable_sort = 944.272 ms
+GPU radix sort = 95.063 ms
+
+Notes:
+RADIX_BITS = 4
+Thread 0 doing all the scanning
