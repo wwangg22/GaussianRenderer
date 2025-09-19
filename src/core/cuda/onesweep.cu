@@ -138,10 +138,10 @@ __global__ void oneSweep(int* input_array, int* output_array, int* lookback, int
 
     __threadfence();
     if (current_tile == 0){
-        if (threadIdx.x == 0) lookback[0] = 2;
+        if (threadIdx.x == 0) atomicExch(&lookback[0], 2);
     }
     else{
-        if (threadIdx.x == 0) lookback[current_tile * (RADIX+1)] =1;
+        if (threadIdx.x == 0) atomicExch(&lookback[current_tile * (RADIX+1)], 1);
     }
     __syncthreads();
 
@@ -152,7 +152,8 @@ __global__ void oneSweep(int* input_array, int* output_array, int* lookback, int
                 // unsigned flag = lookback[k];
                 // bool global = (flag & (1u<<31)) !=0;
                 // bool local = (flag & (1u<<30)) !=0;
-                int flag = lookback[k];
+                // int flag = lookback[k];
+                int flag = atomicAdd(&lookback[k], 0);
                 bool global = (flag == 2);
                 bool local = (flag == 1);
 
@@ -173,14 +174,14 @@ __global__ void oneSweep(int* input_array, int* output_array, int* lookback, int
                 }
             }
         }
-        if (threadIdx.x == 0) lookback[current_tile * (RADIX+1)] = 0;
+        if (threadIdx.x == 0) atomicExch(&lookback[current_tile * (RADIX+1)], 0);
         
         __syncthreads();
         for (int k = threadIdx.x; k < RADIX; k += blockDim.x) {
             lookback[current_tile * (RADIX+1) + k + 1] += tile_offset[k];
         }
         __syncthreads();
-        if (threadIdx.x == 0) lookback[current_tile * (RADIX+1)] = 2;
+        if (threadIdx.x == 0) atomicExch(&lookback[current_tile * (RADIX+1)], 2);
 
     }
 
@@ -220,6 +221,7 @@ extern "C" void oneSweepSort(int* input, int* output, int N, int maxVal, float* 
 
     memcpy(output, input, N * sizeof(int));
     cudaMemcpy(d_input, input, N * sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_output, input, N * sizeof(int), cudaMemcpyHostToDevice);
 
     cudaEvent_t ev_start, ev_stop;
     cudaEventCreate(&ev_start);
