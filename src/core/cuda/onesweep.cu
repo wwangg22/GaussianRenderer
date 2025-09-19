@@ -124,9 +124,16 @@ __global__ void oneSweep(int* input_array, int* output_array, int* lookback, int
     
     // // if (j >= 0) counter_full[8*RADIX + j] += counter_full[7*RADIX + j];
     // // __syncthreads();
+    unsigned flag;
+    if (current_tile == 0) {
+        flag = (1<<31); //first tile
+    } else {
+        flag = (1<<30);
+    }
 
     for (int k = threadIdx.x; k < RADIX; k += blockDim.x) {
-        lookback[current_tile * (RADIX+1) + k+1] = counter_full[8*RADIX + k];
+        atomicExch(&lookback[current_tile * (RADIX) + k], counter_full[8*RADIX + k] | flag);
+        // lookback[current_tile * (RADIX) + k] = counter_full[8*RADIX + k] | flag;
     }
     __syncthreads();
 
@@ -135,54 +142,30 @@ __global__ void oneSweep(int* input_array, int* output_array, int* lookback, int
     }
     __syncthreads();
 
-
-    __threadfence();
-    if (current_tile == 0){
-        if (threadIdx.x == 0) atomicExch(&lookback[0], 2);
-    }
-    else{
-        if (threadIdx.x == 0) atomicExch(&lookback[current_tile * (RADIX+1)], 1);
-    }
-    __syncthreads();
-
     if (current_tile > 0){
-        if (threadIdx.x == 0){
-            int k = (current_tile - 1) * (RADIX+1);
-            while (k >= 0) {
-                // unsigned flag = lookback[k];
-                // bool global = (flag & (1u<<31)) !=0;
-                // bool local = (flag & (1u<<30)) !=0;
-                // int flag = lookback[k];
-                int flag = atomicAdd(&lookback[k], 0);
-                bool global = (flag == 2);
-                bool local = (flag == 1);
 
-                if (global) { // anchor
-                    for (int r = 0; r < RADIX; r++) {
-                        tile_offset[r] += lookback[k + r + 1];
-                    }
+        for (int k = threadIdx.x; k < RADIX; k += blockDim.x) {
+            int prev_tile = (current_tile - 1) * RADIX;
+            while (prev_tile >= 0){
+                int flag = atomicAdd(&lookback[prev_tile + k], 0);
+                bool global = ((flag >> 31) & 1) != 0;
+                bool local  = ((flag >> 30) & 1) != 0;
+
+                if (global){
+                    tile_offset[k] += (flag & 0x3FFFFFFF);
                     break;
-                } else if (local) { // link
-                    for (int r = 0; r < RADIX; r++) {
-                        tile_offset[r] += lookback[k + r + 1];
-                    }
-                    k -= (RADIX+1); // follow one step back
-                    continue;
-                } else {
-                    // no link or anchor found, do nothing
+                } else if (local){
+                    tile_offset[k] += (flag & 0x3FFFFFFF);
+                    prev_tile -= RADIX;
+                }else {
                     __nanosleep(64);
                 }
             }
-        }
-        if (threadIdx.x == 0) atomicExch(&lookback[current_tile * (RADIX+1)], 0);
-        
-        __syncthreads();
-        for (int k = threadIdx.x; k < RADIX; k += blockDim.x) {
-            lookback[current_tile * (RADIX+1) + k + 1] += tile_offset[k];
-        }
-        __syncthreads();
-        if (threadIdx.x == 0) atomicExch(&lookback[current_tile * (RADIX+1)], 2);
 
+            // lookback[current_tile*(RADIX) + k] = (counter_full[8*RADIX + k] + tile_offset[k]) | (1 << 31);
+            atomicExch(&lookback[current_tile*(RADIX) + k], (counter_full[8*RADIX + k] + tile_offset[k]) | (1 << 31));
+        }
+        __syncthreads();
     }
 
     
@@ -215,7 +198,7 @@ extern "C" void oneSweepSort(int* input, int* output, int N, int maxVal, float* 
     int SHARED_MEMORY_SIZE = RADIX * numPasses * (BLOCK_SIZE/32) * sizeof(int);
 
     cudaMalloc(&d_global_counter, numPasses * (RADIX ) * sizeof(int));
-    cudaMalloc(&d_lookback, TOTAL_TILES * (RADIX+1) * sizeof(int));
+    cudaMalloc(&d_lookback, TOTAL_TILES * (RADIX) * sizeof(int));
     cudaMalloc(&d_input, N * sizeof(int));
     cudaMemset(d_global_counter, 0, numPasses * (RADIX) * sizeof(int));
 
@@ -232,7 +215,7 @@ extern "C" void oneSweepSort(int* input, int* output, int N, int maxVal, float* 
     globalBinCounter<<<NUM_BLOCKS, BLOCK_SIZE, SHARED_MEMORY_SIZE>>>(d_input, d_global_counter, numPasses, N);
     for (int shift = 0; shift < numPasses; ++shift) {
         cudaMemcpyToSymbol(gTileCounter, &zero, sizeof(int));
-        cudaMemset(d_lookback, 0, TOTAL_TILES * (RADIX+1) * sizeof(int));
+        cudaMemset(d_lookback, 0, TOTAL_TILES * (RADIX) * sizeof(int));
         oneSweep<<<TOTAL_TILES, BLOCK_SIZE>>>(d_input, d_output, d_lookback, d_global_counter, N, shift);
         cudaMemcpy(d_input, d_output, N * sizeof(int), cudaMemcpyDeviceToDevice);
     }
