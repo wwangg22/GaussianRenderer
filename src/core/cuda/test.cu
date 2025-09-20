@@ -487,7 +487,7 @@ __global__ void RadixSort_4(int* array, int* final, int N, int bits) {
     }
 }
 
-extern "C" void launchRadixSort_4(int *input_array, int *output_array, int N, int max_val) {
+extern "C" void launchRadixSort_4(int *input_array, int *output_array, int N, int max_val, float* kernel_ms) {
     int *d_input;
     int *d_output;
 
@@ -501,10 +501,26 @@ extern "C" void launchRadixSort_4(int *input_array, int *output_array, int N, in
     int threadsPerBlock = min(256, N);
     int numBlocks = 1;
     int memSize = sizeof(unsigned int) * RADIX_4 * (threadsPerBlock+1);
+
+    cudaEvent_t ev_start, ev_stop;
+    cudaEventCreate(&ev_start);
+    cudaEventCreate(&ev_stop);
+
+    cudaEventRecord(ev_start);
     for (int pass = 0; pass < max_passes; pass++){
         RadixSort_4<<<numBlocks, threadsPerBlock, memSize>>>(d_input, d_output, N, pass * RADIX_BITS_4);
         cudaMemcpy(d_input, d_output, sizeof(int) * N, cudaMemcpyDeviceToDevice);
     }
+    cudaEventRecord(ev_stop);
+    cudaEventSynchronize(ev_stop);
+
+    float milliseconds = 0;
+    cudaEventElapsedTime(&milliseconds, ev_start, ev_stop);
+    *kernel_ms = milliseconds;
+
+    cudaEventDestroy(ev_start);
+    cudaEventDestroy(ev_stop);
+    
     cudaDeviceSynchronize();
     cudaMemcpy(output_array, d_output, sizeof(int) * N, cudaMemcpyDeviceToHost);
     cudaFree(d_input);

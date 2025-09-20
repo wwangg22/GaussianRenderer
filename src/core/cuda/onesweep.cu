@@ -19,11 +19,9 @@ __global__ void globalBinCounter(int* input_array, int* global_counter, int numP
     for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < N; i += gridDim.x * blockDim.x) {
         int v = input_array[i];
         #pragma unroll
-        for (int p = 0; p < 4; ++p) {
-
+        for (int p = 0; p < numPasses; ++p) {
             unsigned d = (v >> (p * RADIX_BITS)) & (RADIX - 1);
             atomicAdd(&start[p * RADIX + d], 1u);
-            
         }
     }
     __syncthreads();
@@ -62,43 +60,47 @@ __global__ void oneSweep(int* input_array, int* output_array, int* lookback, int
     __shared__ int counter_full[RADIX*(9)]; //( num warps + 1)* RADIX
     __shared__ int tile_offset[RADIX];
 
-    
-
     int warpId = threadIdx.x >> 5;
     int laneId = threadIdx.x & 31;
-    int numWarps = 8;
+    int numWarps = blockDim.x / 32;
 
     int chunk = TILE_SIZE / 256;
     int* counter = counter_full;
 
     int start = current_tile * TILE_SIZE + warpId * 32 * chunk + laneId;
-    int end = min(N, current_tile * TILE_SIZE + (warpId+1) * 32 * chunk);
+    int end =  current_tile * TILE_SIZE + (warpId+1) * 32 * chunk;
 
     for (int j = threadIdx.x; j < RADIX * (numWarps + 1); j += blockDim.x) counter_full[j] = 0;
     __syncthreads();
 
-    for (int i = laneId + warpId * 32; i < TILE_SIZE; i += 256) {
+    for (int i = laneId + warpId * 32; i < TILE_SIZE; i += blockDim.x) {
         local_offset[i] = 0;
     }
     __syncthreads();
-    unsigned mask[8];
+    unsigned mask[RADIX_BITS];
     int pop;
     int offset = 0;
+    int part;
     for (int i = start; i < end; i += 32) {
-        unsigned active = __activemask();
+        if (i >= N) part  = 0;
+        else part = 1;
+        unsigned active = __ballot_sync(0xFFFFFFFF, part);
+        if (!part) continue;
         int v = (input_array[i] >> (shift*RADIX_BITS)) & (RADIX - 1);
-        //grab ballots from all threads in the warp
-        for (int j = 0; j < 8; ++j) {
-            mask[j] = __ballot_sync(active, (v >> j) & 1);
-        }
+
+        unsigned my_group = __match_any_sync(active,v);
+        // //grab ballots from all threads in the warp
+        // for (int j = 0; j < 8; ++j) {
+        //     mask[j] = __ballot_sync(active, (v >> j) & 1);
+        // }
         //find the threads that have same digit as me
-        unsigned my_group = active;
-        for (int j = 0; j < 8; ++j) {
-            //i tried not to introduce any if else to prevent warp divergence
-            unsigned bit   = (v >> j) & 1u;
-            unsigned keep  = bit ? mask[j] : (active ^ mask[j]);  // complement within 'active'
-            my_group      &= keep;
-        }
+        // unsigned my_group = active;
+        // for (int j = 0; j < 8; ++j) {
+        //     //i tried not to introduce any if else to prevent warp divergence
+        //     unsigned bit   = (v >> j) & 1u;
+        //     unsigned keep  = bit ? mask[j] : (active ^ mask[j]);  // complement within 'active'
+        //     my_group      &= keep;
+        // }
         pop = __popc(my_group);
         int leader = __ffs(my_group) - 1;
         if (laneId == leader) {
@@ -111,7 +113,6 @@ __global__ void oneSweep(int* input_array, int* output_array, int* lookback, int
     __syncthreads();
     if (threadIdx.x < RADIX) {
         int sum = 0;
-        #pragma unroll
         for (int w = 0; w < numWarps; ++w) {
             int c = counter[w * RADIX + threadIdx.x];   // this warp’s count
             counter[w * RADIX + threadIdx.x] = sum;           // exclusive prefix for this warp
@@ -158,7 +159,6 @@ __global__ void oneSweep(int* input_array, int* output_array, int* lookback, int
                     tile_offset[k] += (flag & 0x3FFFFFFF);
                     prev_tile -= RADIX;
                 }else {
-                    __nanosleep(64);
                 }
             }
 
@@ -173,6 +173,7 @@ __global__ void oneSweep(int* input_array, int* output_array, int* lookback, int
     //start to scatter globally
 
     for (int i = start; i < end; i += 32) {
+        if (i >= N) continue;
         int v = (input_array[i] >> (shift*RADIX_BITS)) & (RADIX - 1);
         int global_offset = global_counter[shift * RADIX + v];
         int pos = global_offset + tile_offset[v] + counter_full[warpId * RADIX + v] + local_offset[i - current_tile * TILE_SIZE];
