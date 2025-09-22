@@ -18,7 +18,6 @@ __global__ void globalBinCounter(int* input_array, int* global_counter, int numP
 
     for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < N; i += gridDim.x * blockDim.x) {
         int v = input_array[i];
-        #pragma unroll
         for (int p = 0; p < numPasses; ++p) {
             unsigned d = (v >> (p * RADIX_BITS)) & (RADIX - 1);
             atomicAdd(&start[p * RADIX + d], 1u);
@@ -48,23 +47,28 @@ __global__ void globalBinCounter(int* input_array, int* global_counter, int numP
 
 }
 __device__ int gTileCounter;
-#define TILE_SIZE 1024
+#define TILE_SIZE 2048
 __global__ void oneSweep(int* input_array, int* output_array, int* lookback, int* global_counter, int N, int shift) {
-    __shared__ int shared_current_tile;
-    if (threadIdx.x == 0) shared_current_tile = atomicAdd(&gTileCounter, 1);
-    __syncthreads();
-    int current_tile = shared_current_tile;
+    // __shared__ int shared_current_tile;
+    // if (threadIdx.x == 0) shared_current_tile = atomicAdd(&gTileCounter, 1);
+    // __syncthreads();
+    // int current_tile = shared_current_tile;
+    int current_tile = blockIdx.x;
     const int numTiles   = (N + TILE_SIZE - 1) / TILE_SIZE;
     if (current_tile >= numTiles) return;
-    __shared__ int local_offset[TILE_SIZE];
+    // __shared__ int local_offset[TILE_SIZE];
+    // __shared__ int local_value[TILE_SIZE];
     __shared__ int counter_full[RADIX*(9)]; //( num warps + 1)* RADIX
     __shared__ int tile_offset[RADIX];
+
 
     int warpId = threadIdx.x >> 5;
     int laneId = threadIdx.x & 31;
     int numWarps = blockDim.x / 32;
 
     int chunk = TILE_SIZE / 256;
+    int local_offset[8]; //TILE_SIZE  / 256
+    int local_value[8]; //  TILE_SIZE  / 256
     int* counter = counter_full;
 
     int start = current_tile * TILE_SIZE + warpId * 32 * chunk + laneId;
@@ -73,7 +77,11 @@ __global__ void oneSweep(int* input_array, int* output_array, int* lookback, int
     for (int j = threadIdx.x; j < RADIX * (numWarps + 1); j += blockDim.x) counter_full[j] = 0;
     __syncthreads();
 
-    for (int i = laneId + warpId * 32; i < TILE_SIZE; i += blockDim.x) {
+    // for (int i = laneId + warpId * 32; i < TILE_SIZE; i += blockDim.x) {
+    //     local_offset[i] = 0;
+    // }
+    #pragma unroll
+    for (int i =0; i < 4; ++i){
         local_offset[i] = 0;
     }
     __syncthreads();
@@ -86,29 +94,22 @@ __global__ void oneSweep(int* input_array, int* output_array, int* lookback, int
         else part = 1;
         unsigned active = __ballot_sync(0xFFFFFFFF, part);
         if (!part) continue;
-        int v = (input_array[i] >> (shift*RADIX_BITS)) & (RADIX - 1);
+        int val = input_array[i];
+        // local_value[i - current_tile * TILE_SIZE] = val;
+        local_value[(i - start) / 32] = val;
+        int v = (val >> (shift*RADIX_BITS)) & (RADIX - 1);
 
         unsigned my_group = __match_any_sync(active,v);
-        // //grab ballots from all threads in the warp
-        // for (int j = 0; j < 8; ++j) {
-        //     mask[j] = __ballot_sync(active, (v >> j) & 1);
-        // }
-        //find the threads that have same digit as me
-        // unsigned my_group = active;
-        // for (int j = 0; j < 8; ++j) {
-        //     //i tried not to introduce any if else to prevent warp divergence
-        //     unsigned bit   = (v >> j) & 1u;
-        //     unsigned keep  = bit ? mask[j] : (active ^ mask[j]);  // complement within 'active'
-        //     my_group      &= keep;
-        // }
         pop = __popc(my_group);
         int leader = __ffs(my_group) - 1;
         if (laneId == leader) {
-            offset = atomicAdd(&counter[warpId * RADIX + v], pop);
+            offset = counter[warpId * RADIX + v];
+            counter[warpId * RADIX + v] += pop;
         }
         offset = __shfl_sync(my_group, offset, leader);
 
-        local_offset[i - current_tile * TILE_SIZE] = offset + __popc(my_group & ((1u << laneId) - 1));
+        // local_offset[i - current_tile * TILE_SIZE] = offset + __popc(my_group & ((1u << laneId) - 1));
+        local_offset[(i - start) / 32] = offset + __popc(my_group & ((1u << laneId) - 1));
     }
     __syncthreads();
     if (threadIdx.x < RADIX) {
@@ -133,7 +134,9 @@ __global__ void oneSweep(int* input_array, int* output_array, int* lookback, int
     }
 
     for (int k = threadIdx.x; k < RADIX; k += blockDim.x) {
-        atomicExch(&lookback[current_tile * (RADIX) + k], counter_full[8*RADIX + k] | flag);
+        __threadfence();
+        // atomicExch(&lookback[current_tile * (RADIX) + k], counter_full[8*RADIX + k] | flag);
+        lookback[current_tile * (RADIX) + k] = counter_full[8*RADIX + k] | flag;
         // lookback[current_tile * (RADIX) + k] = counter_full[8*RADIX + k] | flag;
     }
     __syncthreads();
@@ -148,7 +151,9 @@ __global__ void oneSweep(int* input_array, int* output_array, int* lookback, int
         for (int k = threadIdx.x; k < RADIX; k += blockDim.x) {
             int prev_tile = (current_tile - 1) * RADIX;
             while (prev_tile >= 0){
-                int flag = atomicAdd(&lookback[prev_tile + k], 0);
+                // int flag = atomicAdd(&lookback[prev_tile + k], 0);
+                __threadfence();
+                int flag = lookback[prev_tile + k];
                 bool global = ((flag >> 31) & 1) != 0;
                 bool local  = ((flag >> 30) & 1) != 0;
 
@@ -161,23 +166,27 @@ __global__ void oneSweep(int* input_array, int* output_array, int* lookback, int
                 }else {
                 }
             }
-
-            // lookback[current_tile*(RADIX) + k] = (counter_full[8*RADIX + k] + tile_offset[k]) | (1 << 31);
-            atomicExch(&lookback[current_tile*(RADIX) + k], (counter_full[8*RADIX + k] + tile_offset[k]) | (1 << 31));
+            __threadfence();
+            lookback[current_tile*(RADIX) + k] = (counter_full[8*RADIX + k] + tile_offset[k]) | (1 << 31);
+            // atomicExch(&lookback[current_tile*(RADIX) + k], (counter_full[8*RADIX + k] + tile_offset[k]) | (1 << 31));
         }
         __syncthreads();
     }
-
     
+    for (int k = threadIdx.x; k < RADIX; k += blockDim.x) {
+        tile_offset[k] += global_counter[shift * RADIX + k];
+    }
+        //start to scatter globally
     __syncthreads();
-    //start to scatter globally
 
     for (int i = start; i < end; i += 32) {
         if (i >= N) continue;
-        int v = (input_array[i] >> (shift*RADIX_BITS)) & (RADIX - 1);
-        int global_offset = global_counter[shift * RADIX + v];
-        int pos = global_offset + tile_offset[v] + counter_full[warpId * RADIX + v] + local_offset[i - current_tile * TILE_SIZE];
-        output_array[pos] = input_array[i];
+        // int v = (local_value[i - current_tile * TILE_SIZE] >> (shift*RADIX_BITS)) & (RADIX - 1);
+        int v = (local_value[(i - start) / 32] >> (shift*RADIX_BITS)) & (RADIX - 1);
+        // int pos = tile_offset[v] + counter_full[warpId * RADIX + v] + local_offset[i - current_tile * TILE_SIZE];
+        // output_array[pos] = local_value[i - current_tile * TILE_SIZE];
+        int pos = tile_offset[v] + counter_full[warpId * RADIX + v] + local_offset[(i - start) / 32];
+        output_array[pos] = local_value[(i - start) / 32];
     }
 
 }
@@ -188,7 +197,10 @@ extern "C" void oneSweepSort(int* input, int* output, int N, int maxVal, float* 
     int* d_input;
     int* d_output;
     cudaMalloc(&d_output, N * sizeof(int));
-    int numPasses = 4;
+    int numPasses = 0;
+    // while ((1 << (RADIX_BITS * numPasses)) <= maxVal) ++numPasses;
+    numPasses = 4;
+    printf("numPasses: %d\n", numPasses);
 
     int BLOCK_SIZE = 256;
     int NUM_BLOCKS = 174;
@@ -203,7 +215,6 @@ extern "C" void oneSweepSort(int* input, int* output, int N, int maxVal, float* 
     cudaMalloc(&d_input, N * sizeof(int));
     cudaMemset(d_global_counter, 0, numPasses * (RADIX) * sizeof(int));
 
-    memcpy(output, input, N * sizeof(int));
     cudaMemcpy(d_input, input, N * sizeof(int), cudaMemcpyHostToDevice);
     cudaMemcpy(d_output, input, N * sizeof(int), cudaMemcpyHostToDevice);
 
@@ -212,13 +223,17 @@ extern "C" void oneSweepSort(int* input, int* output, int N, int maxVal, float* 
     cudaEventCreate(&ev_stop);
 
     cudaEventRecord(ev_start);
+    int* in = d_input;
+    int* out = d_output;
 
     globalBinCounter<<<NUM_BLOCKS, BLOCK_SIZE, SHARED_MEMORY_SIZE>>>(d_input, d_global_counter, numPasses, N);
+
     for (int shift = 0; shift < numPasses; ++shift) {
-        cudaMemcpyToSymbol(gTileCounter, &zero, sizeof(int));
+        // cudaMemcpyToSymbol(gTileCounter, &zero, sizeof(int));
         cudaMemset(d_lookback, 0, TOTAL_TILES * (RADIX) * sizeof(int));
-        oneSweep<<<TOTAL_TILES, BLOCK_SIZE>>>(d_input, d_output, d_lookback, d_global_counter, N, shift);
-        cudaMemcpy(d_input, d_output, N * sizeof(int), cudaMemcpyDeviceToDevice);
+        oneSweep<<<TOTAL_TILES, BLOCK_SIZE>>>(in, out, d_lookback, d_global_counter, N, shift);
+        std::swap(in, out);
+        // cudaMemcpy(d_input, d_output, N * sizeof(int), cudaMemcpyDeviceToDevice);
     }
 
     cudaEventRecord(ev_stop);
@@ -230,7 +245,8 @@ extern "C" void oneSweepSort(int* input, int* output, int N, int maxVal, float* 
 
     cudaEventDestroy(ev_start);
     cudaEventDestroy(ev_stop);
-    cudaMemcpy(output, d_output, N * sizeof(int), cudaMemcpyDeviceToHost);
+    int* result = (numPasses & 1) ? in : out; 
+    cudaMemcpy(output, result, N * sizeof(int), cudaMemcpyDeviceToHost);
 
     cudaFree(d_global_counter);
     cudaFree(d_input);

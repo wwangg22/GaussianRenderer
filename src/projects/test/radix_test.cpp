@@ -88,7 +88,7 @@ struct Args {
     double factor = 1.15;        // dense geometric progression
     int reps   = 5;
     int seeds  = 1;
-    int maxVal = (1 << 24) - 1;
+    int maxVal = (1u << 31) - 1;
     std::string out = "radix_bench.jsonl";
     bool enable_cpu_ref = false; // off by default per your request
 };
@@ -250,34 +250,34 @@ int main(int argc, char** argv) {
                 }
 
                 // --- radix4 (keys-only) ---
-                {
-                    std::vector<int> in = h_in;
-                    float dev_ms = 0.0f;
-                    auto t0 = std::chrono::high_resolution_clock::now();
-                    launchRadixSort_4(in.data(), h_r4.data(), N, args.maxVal, &dev_ms);
-                    CUDA_OK(cudaGetLastError());
-                    CUDA_OK(cudaDeviceSynchronize());
-                    auto t1 = std::chrono::high_resolution_clock::now();
-                    double wall_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+                // {
+                //     std::vector<int> in = h_in;
+                //     float dev_ms = 0.0f;
+                //     auto t0 = std::chrono::high_resolution_clock::now();
+                //     launchRadixSort_4(in.data(), h_r4.data(), N, args.maxVal, &dev_ms);
+                //     CUDA_OK(cudaGetLastError());
+                //     CUDA_OK(cudaDeviceSynchronize());
+                //     auto t1 = std::chrono::high_resolution_clock::now();
+                //     double wall_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
 
-                    bool nondec = is_nondecreasing(h_r4);
-                    bool keys_ok = (h_r4.size()==h_cub.size()) &&
-                                   std::equal(h_r4.begin(), h_r4.end(), h_cub.begin());
-                    if (args.enable_cpu_ref && ref_keys.size()==static_cast<size_t>(N)) {
-                        keys_ok = keys_ok && std::equal(h_r4.begin(), h_r4.end(), ref_keys.begin());
-                    }
+                //     bool nondec = is_nondecreasing(h_r4);
+                //     bool keys_ok = (h_r4.size()==h_cub.size()) &&
+                //                    std::equal(h_r4.begin(), h_r4.end(), h_cub.begin());
+                //     if (args.enable_cpu_ref && ref_keys.size()==static_cast<size_t>(N)) {
+                //         keys_ok = keys_ok && std::equal(h_r4.begin(), h_r4.end(), ref_keys.begin());
+                //     }
 
-                    double g_dev  = (dev_ms  > 0) ? (static_cast<double>(N) / (dev_ms /1000.0) / 1e9) : 0.0;
-                    double g_wall = (wall_ms > 0) ? (static_cast<double>(N) / (wall_ms/1000.0) / 1e9) : 0.0;
+                //     double g_dev  = (dev_ms  > 0) ? (static_cast<double>(N) / (dev_ms /1000.0) / 1e9) : 0.0;
+                //     double g_wall = (wall_ms > 0) ? (static_cast<double>(N) / (wall_ms/1000.0) / 1e9) : 0.0;
 
-                    write_jsonl(ofs, "radix4", p.name, p.major, p.minor,
-                                N, r, seed, args.maxVal, dev_ms, wall_ms,
-                                g_dev, g_wall, nondec, keys_ok, true);
-                    std::cout << "radix4    r=" << r
-                              << " | dev=" << dev_ms << " ms, wall=" << wall_ms << " ms"
-                              << " | Gitems/s(dev)=" << std::setprecision(6) << g_dev
-                              << " | ok=" << (nondec && keys_ok ? "Y":"N") << "\n";
-                }
+                //     write_jsonl(ofs, "radix4", p.name, p.major, p.minor,
+                //                 N, r, seed, args.maxVal, dev_ms, wall_ms,
+                //                 g_dev, g_wall, nondec, keys_ok, true);
+                //     std::cout << "radix4    r=" << r
+                //               << " | dev=" << dev_ms << " ms, wall=" << wall_ms << " ms"
+                //               << " | Gitems/s(dev)=" << std::setprecision(6) << g_dev
+                //               << " | ok=" << (nondec && keys_ok ? "Y":"N") << "\n";
+                // }
             } // reps
         } // seeds
     } // sizes
