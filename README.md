@@ -6,7 +6,7 @@ This project focuses on building a high-performance Gaussian Renderer with suppo
 ---
 
 ## "Small Steps"
-- [ ] Create Datastructures and Parsing code for 3D Gaussians (aim to finish 9/28/2025)
+- [X] Create Datastructures and Parsing code for 3D Gaussians (finished 9/28/2025)
 - [ ] Implement Interactive Viewer (be able to move around in 3D space, while providing data on view)
 - [ ] Implement Pre-Processing on GPU (culling gaussians, tiling, sorting)
 

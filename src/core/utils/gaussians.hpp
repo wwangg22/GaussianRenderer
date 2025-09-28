@@ -1,0 +1,25 @@
+#include <iostream>
+#include <fstream>
+#include <vector>
+#include <string>
+#include <sstream>
+#include <cstring>
+#include <cstdlib>
+
+struct Gaussian {
+    float x, y, z;
+    float normals[3];
+    float sh[27]; //we can expand later
+    float opacity;
+    float scale[3];
+    float rot[4];
+
+    Gaussian() : x(0), y(0), z(0), opacity(0) {
+        std::fill(std::begin(sh), std::end(sh), 0.0f);
+        std::fill(std::begin(scale), std::end(scale), 0.0f);
+        std::fill(std::begin(rot), std::end(rot), 0.0f);
+    }
+};
+
+
+std::vector<Gaussian> loadGaussiansFromPly(const std::string& filename);
