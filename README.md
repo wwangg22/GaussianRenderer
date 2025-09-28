@@ -5,7 +5,14 @@ This project focuses on building a high-performance Gaussian Renderer with suppo
 
 ---
 
-## Objectives
+## "Small Steps"
+- [ ] Create Datastructures and Parsing code for 3D Gaussians (aim to finish 9/28/2025)
+- [ ] Implement Interactive Viewer (be able to move around in 3D space, while providing data on view)
+- [ ] Implement Pre-Processing on GPU (culling gaussians, tiling, sorting)
+
+---
+
+## OVERALL Objectives
 - [ ] Build a 3D Gaussian Renderer  
 - [ ] Support 4D Gaussians (Spacetime Gaussians)  
 - [ ] Optimize performance to be more efficient/faster than the default 3D Gaussian Renderer  
