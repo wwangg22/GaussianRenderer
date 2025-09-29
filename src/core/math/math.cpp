@@ -1,7 +1,8 @@
+#define _USE_MATH_DEFINES
 #include <cmath>
 #include "math.hpp"
 
-#define _USE_MATH_DEFINES
+
 
 void normalize(float vec[3]){
     float norm = std::sqrt(vec[0]*vec[0] + vec[1]*vec[1] + vec[2]*vec[2]);

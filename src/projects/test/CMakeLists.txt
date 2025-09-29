@@ -9,3 +9,6 @@ target_link_libraries(window_test VIEWER_LIBRARY)
 
 add_executable(parser_test parser_test.cpp)
 target_link_libraries(parser_test UTILS_LIBRARY)
+
+add_executable(camera_test camera_test.cpp)
+target_link_libraries(camera_test SCENE_LIBRARY)
