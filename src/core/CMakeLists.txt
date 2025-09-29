@@ -1,3 +1,5 @@
 add_subdirectory(cuda)
+add_subdirectory(math)
 add_subdirectory(viewer)
 add_subdirectory(utils)
+add_subdirectory(scene)

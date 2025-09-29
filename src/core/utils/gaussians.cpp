@@ -14,6 +14,11 @@ struct Property {
     SlotType type;
     int index; // for properties that have multiple indices, like normals, SH, scale, rot
 };
+Gaussian::Gaussian() : x(0), y(0), z(0), opacity(0) {
+        std::fill(std::begin(sh), std::end(sh), 0.0f);
+        std::fill(std::begin(scale), std::end(scale), 0.0f);
+        std::fill(std::begin(rot), std::end(rot), 0.0f);
+ }
 
 void storeGaussianFromProperty(const Property& prop, Gaussian& g, float value){
     switch (prop.type) {

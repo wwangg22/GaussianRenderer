@@ -14,11 +14,7 @@ struct Gaussian {
     float scale[3];
     float rot[4];
 
-    Gaussian() : x(0), y(0), z(0), opacity(0) {
-        std::fill(std::begin(sh), std::end(sh), 0.0f);
-        std::fill(std::begin(scale), std::end(scale), 0.0f);
-        std::fill(std::begin(rot), std::end(rot), 0.0f);
-    }
+    Gaussian();
 };
 
 
