@@ -1,5 +1,5 @@
-#include <window.h>
+#include "window.hpp"
 
-int main() {
-    return window();
+int main(int argc, char** argv) {
+    return window(argc, argv);
 }

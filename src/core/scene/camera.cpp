@@ -46,8 +46,10 @@ void Camera::updateCameraMatrices() {
 
     negateVec(f_axis); // look towards -z in camera space
 
-    makeRigidTransformMat(r_axis, u_axis, f_axis, position, V_matrix);
+    makeViewMatrix(r_axis, u_axis, f_axis, position, V_matrix);
     buildPerspectiveMatrix(fovY, aspectRatio, nearClip, farClip, P_matrix);
+
+    MatMul_4D(P_matrix, V_matrix, M_matrix);
 }
 
 void Camera::zoom(float delta){
@@ -85,4 +87,12 @@ void Camera::orbit(float azimuth, float elevation){
         position[i] = lookAt[i] + radius_vec[i];
     }
     updateCameraMatrices();
+}
+
+void Camera::transformPointToCameraSpace(const float point[4], float out[4]){
+    MatVecMul_4D(M_matrix, point, out);
+
+    out[0] = out[0] / out[3];
+    out[1] = out[1] / out[3];
+    out[2] = out[2] / out[3];
 }

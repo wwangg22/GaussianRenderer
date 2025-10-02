@@ -14,6 +14,7 @@ struct Camera {
 
     float P_matrix[16];
     float V_matrix[16];
+    float M_matrix[16]; // model matrix, identity for now
     float f_axis[3];
     float r_axis[3];
     float u_axis[3];
@@ -31,4 +32,6 @@ struct Camera {
 
     void zoom(float delta); 
     void orbit(float azimuth, float elevation);
+
+    void transformPointToCameraSpace(const float point[4], float out[4]);
 };

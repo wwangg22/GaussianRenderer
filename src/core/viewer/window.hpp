@@ -1,0 +1,1 @@
+int window(int argc, char** argv);
