@@ -1,6 +1,7 @@
 #define _USE_MATH_DEFINES
 
 #include <cmath>
+#include <iostream>
 #include "camera.hpp"
 #include "math.hpp"
 
@@ -46,10 +47,77 @@ void Camera::updateCameraMatrices() {
 
     negateVec(f_axis); // look towards -z in camera space
 
+    build3x3RotationMatrix(r_axis, u_axis, f_axis, r_cam);
+    transpose3x3(r_cam, r_cam_T);
+
     makeViewMatrix(r_axis, u_axis, f_axis, position, V_matrix);
     buildPerspectiveMatrix(fovY, aspectRatio, nearClip, farClip, P_matrix);
 
     MatMul_4D(P_matrix, V_matrix, M_matrix);
+}
+
+void Camera::updateFrustumPlanes(){
+    // compute plane normals for frustum culling
+    // near plane
+    for (int i = 0; i < 3; i++) {
+        plane_normals[i] = f_axis[i];
+    }
+    //offset
+    plane_normals[3] = (f_axis[0]*position[0] + f_axis[1]*position[1] + f_axis[2]*position[2] - nearClip);
+
+    // far plane
+    for (int i = 0; i < 3; i++) {
+        plane_normals[4 + i] = -f_axis[i];
+    }   
+    //offset
+    plane_normals[7] = -(f_axis[0]*position[0] + f_axis[1]*position[1] + f_axis[2]*position[2] - farClip);
+
+    float t_y = std::tan(fovY * 0.5f * (M_PI / 180.0f));
+    float t_x = t_y * aspectRatio;
+    float right_norm[3];
+    //right plane
+    for (int i = 0; i < 3; i ++) {
+        right_norm[i] = f_axis[i] * t_x - r_axis[i];
+    }
+    normalize(right_norm);
+    for (int i = 0; i < 3; i++) {
+        plane_normals[8 + i] = right_norm[i];
+    }   
+
+    //offset
+    plane_normals[11] = 0.0f;
+
+    //left plane
+    float left_norm[3];
+    for (int i = 0; i < 3; i ++) {
+        left_norm[i] = f_axis[i] * t_x + r_axis[i];
+    }
+    normalize(left_norm);
+    for (int i = 0; i < 3; i++) {
+        plane_normals[12 + i] = left_norm[i];
+    }
+    plane_normals[15] = 0.0f;
+
+    //top plane
+    float top_norm[3];
+    for (int i = 0; i < 3; i ++) {
+        top_norm[i] = f_axis[i] * t_y - u_axis[i];
+    }
+    normalize(top_norm);
+    for (int i = 0; i < 3; i++) {
+        plane_normals[16 + i] = top_norm[i];
+    }
+    plane_normals[19] = 0.0f;
+    //bottom plane
+    float bottom_norm[3];
+    for (int i = 0; i < 3; i ++) {
+        bottom_norm[i] = f_axis[i] * t_y + u_axis[i];
+    }
+    normalize(bottom_norm);
+    for (int i = 0; i < 3; i++) {
+        plane_normals[20 + i] = bottom_norm[i];
+    }
+    plane_normals[23] = 0.0f;
 }
 
 void Camera::zoom(float delta){
@@ -91,6 +159,10 @@ void Camera::orbit(float azimuth, float elevation){
 
 void Camera::transformPointToCameraSpace(const float point[4], float out[4]){
     MatVecMul_4D(M_matrix, point, out);
+
+    // float out_test[4];
+    // MatVecMul_4D(V_matrix, point, out_test);
+    // std::cout << "After View Matrix: (" << out_test[0] << ", " << out_test[1] << ", " << out_test[2] << ")\n";
 
     out[0] = out[0] / out[3];
     out[1] = out[1] / out[3];

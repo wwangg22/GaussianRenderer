@@ -19,6 +19,10 @@ struct Camera {
     float r_axis[3];
     float u_axis[3];
 
+    float r_cam[9]; // rotation from world to camera space (used for covariance)
+    float r_cam_T[9]; // transpose of r_cam
+
+    float plane_normals[24];
 
     Camera();
 
@@ -28,6 +32,7 @@ struct Camera {
     void setAspectRatio(float ratio);
     void setClippingPlanes(float nearC, float farC);
 
+    void updateFrustumPlanes();
     void updateCameraMatrices();
 
     void zoom(float delta); 

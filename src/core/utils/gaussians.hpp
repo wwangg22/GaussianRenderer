@@ -13,6 +13,11 @@ struct Gaussian {
     float opacity;
     float scale[3];
     float rot[4];
+    float aabb[4]; // x_min, y_min, x_max, y_max
+    uint64_t radix_id;
+
+    float covar[4]; // 2x2 covariance matrix stored in row-major order
+
 
     Gaussian();
 };
