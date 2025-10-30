@@ -1,4 +1,4 @@
-
+#pragma once
 struct Camera {
     float position[3];
     float lookAt[3];

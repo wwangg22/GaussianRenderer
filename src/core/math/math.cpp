@@ -140,6 +140,8 @@ void buildRotMatFromQuat(float quat[4], float R[9]){
     float x = quat[1];
     float y = quat[2];
     float z = quat[3];
+    float n = std::sqrt(x*x + y*y + z*z + w*w);
+    x/=n; y/=n; z/=n; w/=n;
 
     R[0] = 1 - 2*y*y - 2*z*z; R[1] = 2*x*y - 2*w*z;     R[2] = 2*x*z + 2*w*y;
     R[3] = 2*x*y + 2*w*z;     R[4] = 1 - 2*x*x - 2*z*z; R[5] = 2*y*z - 2*w*x;

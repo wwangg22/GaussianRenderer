@@ -12,3 +12,6 @@ target_link_libraries(parser_test UTILS_LIBRARY)
 
 add_executable(camera_test camera_test.cpp)
 target_link_libraries(camera_test SCENE_LIBRARY)
+
+add_executable(cull_sort_test cull_sort_test.cpp)
+target_link_libraries(cull_sort_test RENDER_LIBRARY cuda_kernels)

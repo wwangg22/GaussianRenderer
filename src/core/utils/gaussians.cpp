@@ -128,11 +128,17 @@ std::vector<Gaussian> loadGaussiansFromPly(const std::string& filename) {
                 storeGaussianFromProperty(prop, g, value);
             }
             // Only add if opacity > 0
-            if (g.opacity > 0.0f) {
-                gaussians.push_back(g);
+            // if (g.opacity > 0.0f) {
+            //     gaussians.push_back(g);
+            // }
+            gaussians.push_back(g);
+            if (i < 10){
+                // print gaussian position
+                std::cout << "\nGaussian " << i << ": ";
+                std::cout << g.x << ", " << g.y << ", " << g.z;
             }
         }
-        std::cout << "example gaussian: "<< gaussians[1].x << ", " << gaussians[1].y << ", " << gaussians[1].z << ", " << gaussians[1].opacity << std::endl;
+        // std::cout << "example gaussian: "<< gaussians[1].x << ", " << gaussians[1].y << ", " << gaussians[1].z << ", " << gaussians[1].opacity << std::endl;
         return gaussians;
     } else if (format != "ascii 1.0") {
         std::cerr << "Unsupported PLY format: " << format << std::endl;

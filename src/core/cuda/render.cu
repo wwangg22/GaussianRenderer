@@ -1,9 +1,8 @@
 #include <cuda_runtime.h>
-#include <iostream>
-#include <cmath> 
-#include "onesweep.cuh"
+#include "gaussians.hpp"
+#include "render.cuh"
 
-static __global__ void globalBinCounter(int* input_array, int* global_counter, int numPasses, int N){
+static __global__ void globalBinCounter(lightWeightGaussian* d_in, int* d_global_counter, int numPasses, int N) {
     extern __shared__ int local_counter[]; //warps * RADIX * numPasses
     int warpId = threadIdx.x >> 5;
     int laneId = threadIdx.x & 31;
@@ -16,7 +15,7 @@ static __global__ void globalBinCounter(int* input_array, int* global_counter, i
     __syncthreads();
 
     for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < N; i += gridDim.x * blockDim.x) {
-        int v = input_array[i];
+        uint64_t v = d_in[i].radix_id;
         for (int p = 0; p < numPasses; ++p) {
             unsigned d = (v >> (p * RADIX_BITS)) & (RADIX - 1);
             atomicAdd(&start[p * RADIX + d], 1u);
@@ -39,12 +38,11 @@ static __global__ void globalBinCounter(int* input_array, int* global_counter, i
         unsigned int sum = 0u;
         #pragma unroll
         for (int w = 0; w < numWarps; ++w) sum += local_counter[w * RADIX * numPasses + j];
-        atomicAdd(&global_counter[j], sum);
+        atomicAdd(&d_global_counter[j], sum);
     }
-
 }
-static __device__ int gTileCounter;
-static __global__ void oneSweep(int* input_array, int* output_array, int* lookback, int* global_counter, int N, int shift) {
+
+static __global__ void oneSweep(lightWeightGaussian* d_in, lightWeightGaussian* d_out, int* lookback, int* global_counter, int N, int shift) {
     // __shared__ int shared_current_tile;
     // if (threadIdx.x == 0) shared_current_tile = atomicAdd(&gTileCounter, 1);
     // __syncthreads();
@@ -64,7 +62,7 @@ static __global__ void oneSweep(int* input_array, int* output_array, int* lookba
 
     int chunk = TILE_SIZE / 256;
     int local_offset[8]; //TILE_SIZE  / 256
-    int local_value[8]; //  TILE_SIZE  / 256
+    lightWeightGaussian local_value[8]; //  TILE_SIZE  / 256
     int* counter = counter_full;
 
     int start = current_tile * TILE_SIZE + warpId * 32 * chunk + laneId;
@@ -90,9 +88,10 @@ static __global__ void oneSweep(int* input_array, int* output_array, int* lookba
         else part = 1;
         unsigned active = __ballot_sync(0xFFFFFFFF, part);
         if (!part) continue;
-        int val = input_array[i];
+        lightWeightGaussian lwg = d_in[i];
+        uint64_t val = lwg.radix_id;
         // local_value[i - current_tile * TILE_SIZE] = val;
-        local_value[(i - start) / 32] = val;
+        local_value[(i - start) / 32] = lwg;
         int v = (val >> (shift*RADIX_BITS)) & (RADIX - 1);
 
         unsigned my_group = __match_any_sync(active,v);
@@ -178,25 +177,26 @@ static __global__ void oneSweep(int* input_array, int* output_array, int* lookba
     for (int i = start; i < end; i += 32) {
         if (i >= N) continue;
         // int v = (local_value[i - current_tile * TILE_SIZE] >> (shift*RADIX_BITS)) & (RADIX - 1);
-        int v = (local_value[(i - start) / 32] >> (shift*RADIX_BITS)) & (RADIX - 1);
+        int v = (local_value[(i - start) / 32].radix_id >> (shift*RADIX_BITS)) & (RADIX - 1);
         // int pos = tile_offset[v] + counter_full[warpId * RADIX + v] + local_offset[i - current_tile * TILE_SIZE];
         // output_array[pos] = local_value[i - current_tile * TILE_SIZE];
         int pos = tile_offset[v] + counter_full[warpId * RADIX + v] + local_offset[(i - start) / 32];
-        output_array[pos] = local_value[(i - start) / 32];
+        d_out[pos] = local_value[(i - start) / 32];
     }
 
 }
 
-extern "C" void oneSweepSort(int* input, int* output, int N, int maxVal, float* kernel_ms){
+extern "C" void oneSweep3DGaussianSort(lightWeightGaussian* d_in, 
+                                       int N, 
+                                       int num_bits,
+                                       float* kernel_ms) {
+    
     int* d_global_counter;
     int* d_lookback;
-    int* d_input;
-    int* d_output;
-    cudaMalloc(&d_output, N * sizeof(int));
-    int numPasses = 0;
-    // while ((1 << (RADIX_BITS * numPasses)) <= maxVal) ++numPasses;
-    numPasses = 4;
-    printf("numPasses: %d\n", numPasses);
+    lightWeightGaussian* d_input;
+    lightWeightGaussian* d_output;
+    cudaMalloc(&d_output, N * sizeof(lightWeightGaussian));
+    int numPasses = (num_bits + 7) / 8;
 
     int BLOCK_SIZE = 256;
     int NUM_BLOCKS = 174;
@@ -208,19 +208,18 @@ extern "C" void oneSweepSort(int* input, int* output, int N, int maxVal, float* 
 
     cudaMalloc(&d_global_counter, numPasses * (RADIX ) * sizeof(int));
     cudaMalloc(&d_lookback, TOTAL_TILES * (RADIX) * sizeof(int));
-    cudaMalloc(&d_input, N * sizeof(int));
+    cudaMalloc(&d_input, N * sizeof(lightWeightGaussian));
     cudaMemset(d_global_counter, 0, numPasses * (RADIX) * sizeof(int));
 
-    cudaMemcpy(d_input, input, N * sizeof(int), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_output, input, N * sizeof(int), cudaMemcpyHostToDevice);
-
+    cudaMemcpy(d_input, d_in, N * sizeof(lightWeightGaussian), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_output, d_in, N * sizeof(lightWeightGaussian), cudaMemcpyHostToDevice);
     cudaEvent_t ev_start, ev_stop;
     cudaEventCreate(&ev_start);
     cudaEventCreate(&ev_stop);
 
     cudaEventRecord(ev_start);
-    int* in = d_input;
-    int* out = d_output;
+    lightWeightGaussian* in = d_input;
+    lightWeightGaussian* out = d_output;
 
     globalBinCounter<<<NUM_BLOCKS, BLOCK_SIZE, SHARED_MEMORY_SIZE>>>(d_input, d_global_counter, numPasses, N);
 
@@ -241,8 +240,8 @@ extern "C" void oneSweepSort(int* input, int* output, int N, int maxVal, float* 
 
     cudaEventDestroy(ev_start);
     cudaEventDestroy(ev_stop);
-    int* result = (numPasses & 1) ? in : out; 
-    cudaMemcpy(output, result, N * sizeof(int), cudaMemcpyDeviceToHost);
+    lightWeightGaussian* result = (numPasses & 1) ? in : out; 
+    cudaMemcpy(d_in, result, N * sizeof(lightWeightGaussian), cudaMemcpyDeviceToHost);
 
     cudaFree(d_global_counter);
     cudaFree(d_input);
