@@ -14,12 +14,14 @@ struct Property {
     SlotType type;
     int index; // for properties that have multiple indices, like normals, SH, scale, rot
 };
-Gaussian::Gaussian() : x(0), y(0), z(0), opacity(0), radix_id(0){
+Gaussian::Gaussian() : x(0), y(0), z(0), opacity(0), radix_id(0), px_x(0), px_y(0) {
         std::fill(std::begin(normals), std::end(normals), 0.0f);
         std::fill(std::begin(aabb), std::end(aabb), 0.0f);
         std::fill(std::begin(sh), std::end(sh), 0.0f);
         std::fill(std::begin(scale), std::end(scale), 0.0f);
         std::fill(std::begin(rot), std::end(rot), 0.0f);
+        std::fill(std::begin(color), std::end(color), 0.0f);
+        std::fill(std::begin(inv_covar), std::end(inv_covar), 0.0f);
  }
 
 void storeGaussianFromProperty(const Property& prop, Gaussian& g, float value){

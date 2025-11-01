@@ -26,6 +26,25 @@ std::vector<Gaussian> frustum_cull(std::vector<Gaussian>& g, Camera& cam, const 
     return out;
 }
 
+const float SH_C0 = 0.28209479177387814f;
+const float SH_C1 = 0.4886025119029199f;
+const float SH_C2[] = {
+	1.0925484305920792f,
+	-1.0925484305920792f,
+	0.31539156525252005f,
+	-1.0925484305920792f,
+	0.5462742152960396f
+};
+const float SH_C3[] = {
+	-0.5900435899266435f,
+	2.890611442640554f,
+	-0.4570457994644658f,
+	0.3731763325901154f,
+	-0.4570457994644658f,
+	1.445305721320277f,
+	-0.5900435899266435f
+};
+
 
 void transformAndTileGaussians(std::vector<Gaussian>& g, std::vector<lightWeightGaussian>& out, Camera& cam, 
                                 TilingInformation& tile_info, float k){
@@ -40,13 +59,12 @@ void transformAndTileGaussians(std::vector<Gaussian>& g, std::vector<lightWeight
     float pad = 1.0f; // padding factor
     const float fy = 1.0f / std::tan(fovY * 0.5f * (M_PI / 180.0f));
     const float fx = fy / aspect;
+    int deg = 3;
 
     // std::cout << "Camera fx: " << fx << ", fy: " << fy << "\n";
-    if (tile_info.num_tile_x <= 0 || tile_info.num_tile_y <= 0) {
-        throw std::runtime_error("num_tile_{x,y} must be > 0");
-    }
-    int width_stride  = std::max(1, static_cast<int> ((tile_info.W + tile_info.num_tile_x - 1) / tile_info.num_tile_x));
-    int height_stride = std::max(1, static_cast<int> ((tile_info.H + tile_info.num_tile_y - 1) / tile_info.num_tile_y));
+
+    int width_stride  = tile_info.width_stride;
+    int height_stride = tile_info.height_stride;
     // std::cout << "Tile size: " << width_stride << " x " << height_stride << "\n";
     float jacobian[6];
     float jacobian_T[6];
@@ -58,6 +76,67 @@ void transformAndTileGaussians(std::vector<Gaussian>& g, std::vector<lightWeight
     float covar[9];
     for (int idx = 0 ; idx < g.size(); idx++) {
         Gaussian& gauss = g[idx];
+
+        // print spherical harmonics values:
+        // for (int i = 0; i < 27; i++) {
+        //     std::cout << "SH " << i << ": " << gauss.sh[i] << "\n";
+        // }
+
+        // grab color from SH
+        float viewing_dir[3] = {gauss.x - cam.position[0],
+                                gauss.y - cam.position[1],
+                                gauss.z - cam.position[2]};
+        normalize(viewing_dir);
+
+        // print viewing dir
+        // std::cout << "Viewing dir: ";
+        // std::cout << viewing_dir[0] << ", " << viewing_dir[1] << ", " << viewing_dir[2] << "\n";
+        for (int i = 0; i <3; i++) gauss.color[i] = gauss.sh[i] * SH_C0; 
+
+        if (deg > 0)
+        {
+            float x = viewing_dir[0];
+            float y = viewing_dir[1];
+            float z = viewing_dir[2];
+
+            for (int i = 0; i < 3; i++){
+                gauss.color[i] += SH_C1 * z * gauss.sh[2*3 + i];
+                gauss.color[i] -= SH_C1 * y * gauss.sh[3 + i];
+                gauss.color[i] -= SH_C1 * x * gauss.sh[3*3 + i];
+            }
+
+            if (deg > 1)
+            {
+                float xx = x * x, yy = y * y, zz = z * z;
+                float xy = x * y, yz = y * z, xz = x * z;
+                for (int i = 0; i < 3; i++) {
+                    gauss.color[i] += SH_C2[0] * xy * gauss.sh[4*3 + i];
+                    gauss.color[i] += SH_C2[1] * yz * gauss.sh[5*3 + i];
+                    gauss.color[i] += SH_C2[2] * (2.0f * zz - xx - yy) * gauss.sh[6*3 + i];
+                    gauss.color[i] += SH_C2[3] * xz * gauss.sh[7*3 + i];
+                    gauss.color[i] += SH_C2[4] * (xx - yy) * gauss.sh[8*3 + i];
+                }
+                // if (deg > 2)
+                // {
+                //     for(int i = 0; i < 3; i++) {
+                //         gauss.color[i] += SH_C3[0] * y * (3.0f * xx - yy) * gauss.sh[9*3 + i];
+                //         gauss.color[i] += SH_C3[1] * xy * z * gauss.sh[10*3 + i];
+                //         gauss.color[i] += SH_C3[2] * y * (4.0f * zz - xx - yy) * gauss.sh[11*3 + i];
+                //         gauss.color[i] += SH_C3[3] * z * (2.0f * zz - 3.0f * xx - 3.0f * yy) * gauss.sh[12*3 + i];
+                //         gauss.color[i] += SH_C3[4] * x * (4.0f * zz - xx - yy) * gauss.sh[13*3 + i];
+                //         gauss.color[i] += SH_C3[5] * z * (xx - yy) * gauss.sh[14*3 + i];
+                //         gauss.color[i] += SH_C3[6] * x * (xx - 3.0f * yy) * gauss.sh[15*3 + i];
+                //     }
+                // }
+            }
+        }
+        for (int i = 0; i <3; i++){
+            gauss.color[i] += 0.5f;
+            gauss.color[i] = std::min(std::max(gauss.color[i], 0.0f), 1.0f);
+        }
+        // print color of gaussian
+        // std::cout << "Gaussian " << idx << " color: ";
+        // std::cout << gauss.color[0] << ", " << gauss.color[1] << ", " << gauss.color[2] << "\n";
         float old_xyz[4] = {gauss.x, gauss.y, gauss.z, 1.0f};
         float new_xyz[4];
         float tmp_xyz[4];
@@ -140,7 +219,17 @@ void transformAndTileGaussians(std::vector<Gaussian>& g, std::vector<lightWeight
         // std::cout << Sigma2D[0] << " " << Sigma2D[1] << "\n";
         // std::cout << Sigma2D[2] << " " << Sigma2D[3] << "\n";
 
-        memcpy(gauss.covar, Sigma2D, sizeof(float)*4);
+        float invSigma2D[4];
+        float det = Sigma2D[0]*Sigma2D[3] - Sigma2D[1]*Sigma2D[2];
+        if (det < 1e-8f) {
+            std::cout << "Warning: Singular Covariance Matrix for gaussian " << idx << ". Skipping.\n";
+            continue;
+        }
+        float invDet = 1.0f / det;
+        invSigma2D[0] =  Sigma2D[3] * invDet; invSigma2D[1] = -Sigma2D[1] * invDet;
+        invSigma2D[2] = -Sigma2D[2] * invDet; invSigma2D[3] =  Sigma2D[0] * invDet;
+
+        memcpy(gauss.inv_covar, invSigma2D, sizeof(float)*4);
 
         //extract eigenvalues
         float Sxx = Sigma2D[0];
@@ -183,6 +272,9 @@ void transformAndTileGaussians(std::vector<Gaussian>& g, std::vector<lightWeight
         int ymin_px = static_cast<int> (std::floor(((ymin + 1.0f) * 0.5f) * tile_info.H));
         int ymax_px = static_cast<int> (std::ceil(((ymax + 1.0f) * 0.5f) * tile_info.H));
 
+        gauss.px_x = static_cast<int> (std::round(((new_xyz[0] + 1.0f) * 0.5f) * tile_info.W));
+        gauss.px_y = static_cast<int> (std::round(((new_xyz[1] + 1.0f) * 0.5f) * tile_info.H));
+
         gauss.aabb[0] = xmin_px;
         gauss.aabb[1] = ymin_px;
         gauss.aabb[2] = xmax_px;
@@ -202,9 +294,13 @@ void transformAndTileGaussians(std::vector<Gaussian>& g, std::vector<lightWeight
                 lwg.radix_id = (static_cast<uint64_t>(tile_id) << 32) | static_cast<uint32_t> (-Z);
                 lwg.gaussian_id = static_cast<uint32_t> (idx); 
                 out.push_back(lwg);
-                tile_info.tile_id_counts[tile_id]++;
+                tile_info.tile_id_offset[tile_id]++;
             }
         }
+    }
+    // inclusive scan to get offsets
+    for (int i = 1; i < tile_info.num_tile_x * tile_info.num_tile_y; i++) {
+        tile_info.tile_id_offset[i] += tile_info.tile_id_offset[i - 1];
     }
 }
 
