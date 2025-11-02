@@ -16,3 +16,9 @@ extern "C" void renderGaussiansCUDA(float* d_out_pixels,
                                  int num_gaussians,
                                  int num_lwg,
                                  float* kernel_ms);
+extern "C" void renderGaussiansNoTilingCUDA(float* out_pixels, 
+                                 TilingInformation* tile_info, 
+                                 Gaussian* gaussians, 
+                                 lightWeightGaussian* sorted_gaussians,
+                                 int num_gaussians,
+                                 float* kernel_ms);

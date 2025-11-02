@@ -23,7 +23,6 @@ add_library(glad STATIC
 target_include_directories(glad PUBLIC
   ${CMAKE_SOURCE_DIR}/thirdparty/glad/include
 )
-
 include(FetchContent)
 FetchContent_Declare(glfw
   GIT_REPOSITORY https://github.com/glfw/glfw.git
