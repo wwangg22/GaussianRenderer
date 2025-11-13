@@ -323,8 +323,12 @@ void transformAndTileGaussians(std::vector<Gaussian>& g, std::vector<lightWeight
     }
 }
 
-void drawScreen(float* pixel_out){
-
+Canvas::Canvas(int width, int height) {
+    // Initialize canvas with tiling info
+    this->width = width;
+    this->height = height;
+}
+void Canvas::init() {
     if (!glfwInit()) {
         std::cerr << "Failed to init GLFW\n";
         return;
@@ -337,56 +341,44 @@ void drawScreen(float* pixel_out){
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
 #endif
 
-    const int W = 800, H = 600;
-    GLFWwindow* win = glfwCreateWindow(W, H, "My Blank Viewer", nullptr, nullptr);
-    if (!win) {
+    const int W = this->width, H = this->height;
+    this->window = glfwCreateWindow(W, H, "My Blank Viewer", nullptr, nullptr);
+    if (!this->window) {
         std::cerr << "Failed to create window\n";
         glfwTerminate();
         return;
     }
 
-    glfwMakeContextCurrent(win);
+    glfwMakeContextCurrent(this->window);
     glfwSwapInterval(1); // vsync
-     if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
+    if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
         std::cerr << "Failed to initialize GLAD\n";
         return;
     }  
     glViewport(0, 0, W, H);
 
     // initialize vertex BUFFER OBJECT (VBO)
-    unsigned int VBO;
     // first arg is number of buffers we want
     // second arg is the address of the buffer we want to initialize
     // so if we pass >1 we need to pass an array of unsigned ints
-    glGenBuffers(1, &VBO);  
+    glGenBuffers(1, &this->VBO);  
     // we just specify to openGL this is a vertex buffer (GL_ARRAY_BUFFER)
-    glBindBuffer(GL_ARRAY_BUFFER, VBO);
+    glBindBuffer(GL_ARRAY_BUFFER, this->VBO);
 
-    unsigned int VAO;
-    glGenVertexArrays(1, &VAO);
+    glGenVertexArrays(1, &this->VAO);
     // 1. bind Vertex Array Object
-    glBindVertexArray(VAO);
-
-    // 1) Create a fullscreen QUAD with positions + texcoords + color
-    struct Vertex {
-        float pos[4];     // in_vertex
-        float uv[4];      // in_texcoord (z,w unused)
-        float col[4];     // in_color
-    };
+    glBindVertexArray(this->VAO);
 
     // Two triangles covering NDC [-1,1], UV [0,1]
     const float U1 = 0.999999f, V1 = 0.999999f; // or std::nextafter(1.0f, 0.0f)
-    Vertex quad[6] = {
-    {{-1,-1,0,1}, {0,0,0,0}, {1,1,1,1}},
-    {{ 1,-1,0,1}, {U1,0,0,0}, {1,1,1,1}},
-    {{ 1, 1,0,1}, {U1,V1,0,0}, {1,1,1,1}},
-    {{-1,-1,0,1}, {0,0,0,0}, {1,1,1,1}},
-    {{ 1, 1,0,1}, {U1,V1,0,0}, {1,1,1,1}},
-    {{-1, 1,0,1}, {0,V1,0,0}, {1,1,1,1}},
-    };
+    this->quad[0] ={{-1,-1,0,1}, {0,0,0,0}, {1,1,1,1}};
+    this->quad[1] = {{ 1,-1,0,1}, {U1,0,0,0}, {1,1,1,1}};
+    this->quad[2] = {{ 1, 1,0,1}, {U1,V1,0,0}, {1,1,1,1}};
+    this->quad[3] = {{-1,-1,0,1}, {0,0,0,0}, {1,1,1,1}};
+    this->quad[4] = {{ 1, 1,0,1}, {U1,V1,0,0}, {1,1,1,1}};
+    this->quad[5] = {{-1, 1,0,1}, {0,V1,0,0}, {1,1,1,1}};
 
-
-    glBufferData(GL_ARRAY_BUFFER, sizeof(quad), quad, GL_STATIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(this->quad), this->quad, GL_STATIC_DRAW);
 
     GLsizei stride = sizeof(Vertex);
     std::size_t off_pos = offsetof(Vertex, pos);
@@ -404,95 +396,102 @@ void drawScreen(float* pixel_out){
     glEnableVertexAttribArray(2);
     glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, stride, (void*)off_col);
 
-    const char* vertexShaderSource = "#version 450\n"
-    "layout(location = 0) in vec4 in_vertex;   /**< Input vertex coordinates */\n"
-    "layout(location = 1) in vec4 in_texcoord; /**< Input texture coordinates */\n"
-    "layout(location = 2) in vec4 in_color;    /**< Input colour value */\n"
-    "\n"
-    "out vec4 texcoord;                        /**< Output texture coordinates */\n"
-    "out vec4 color;                           /**< Output color value */\n"
+    
 
-    "void main(void) {\n"
-    "    gl_Position = in_vertex;\n"
-    "    texcoord    = in_texcoord;\n"
-    "    color       = in_color;\n"
-    "}\0";
+    this->vertexShader = glCreateShader(GL_VERTEX_SHADER);
 
-    const char* fragmentShaderSource = "#version 450\n"
-    "\n"
-    "layout(location = 0) out vec4 out_color;\n"
-    "\n"
-    "layout(std430, binding = 0) buffer colorLayout\n"
-    "{\n"
-    "    float data[];\n"
-    "} source;\n"
-    "\n"
-    "uniform bool flip = false;\n"
-    "uniform int width = 1000;\n"
-    "uniform int height = 800;\n"
-    "\n"
-    "in vec4 texcoord;\n"
-    "\n"
-    "void main(void)\n"
-    "{\n"
-    "    int x = int(texcoord.x * width);\n"
-    "    int y;\n"
-    "\n"
-    "    if(flip)\n"
-    "        y = height - 1 - int(texcoord.y * height);\n"
-    "    else\n"
-    "        y = int(texcoord.y * height);\n"
-    "\n"
-    "    float r = source.data[0 * width * height + (y * width + x)];\n"
-    "    float g = source.data[1 * width * height + (y * width + x)];\n"
-    "    float b = source.data[2 * width * height + (y * width + x)];\n"
-    "    vec4 color   = vec4(r, g, b, 1);\n"
-    "    out_color    = color;\n"
-    "}\n";
-    unsigned int vertexShader;
-    vertexShader = glCreateShader(GL_VERTEX_SHADER);
+    glShaderSource(this->vertexShader, 1, &this->vertexShaderSource, NULL);
+    glCompileShader(this->vertexShader);
 
-    glShaderSource(vertexShader, 1, &vertexShaderSource, NULL);
-    glCompileShader(vertexShader);
+    this->fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
+    glShaderSource(this->fragmentShader, 1, &this->fragmentShaderSource, NULL);
+    glCompileShader(this->fragmentShader);
 
-    unsigned int fragmentShader;
-    fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
-    glShaderSource(fragmentShader, 1, &fragmentShaderSource, NULL);
-    glCompileShader(fragmentShader);
+    
+    this->shaderProgram = glCreateProgram();
+    glAttachShader(this->shaderProgram, this->vertexShader);
+    glAttachShader(this->shaderProgram, this->fragmentShader);
+    glLinkProgram(this->shaderProgram);
 
-    unsigned int shaderProgram;
-    shaderProgram = glCreateProgram();
-
-    glAttachShader(shaderProgram, vertexShader);
-    glAttachShader(shaderProgram, fragmentShader);
-    glLinkProgram(shaderProgram);
-
-    glUseProgram(shaderProgram);
+    glUseProgram(this->shaderProgram);
 
 
-    GLuint ssbo=0;
-    glGenBuffers(1, &ssbo);
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo);
-    glBufferData(GL_SHADER_STORAGE_BUFFER, W*H*3*sizeof(float), pixel_out, GL_DYNAMIC_DRAW);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, ssbo); // <-- binding = 0 matches the shader
+    
+    glGenBuffers(1, &this->ssbo);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, this->ssbo);
+
+    glBufferData(GL_SHADER_STORAGE_BUFFER, W*H*3*sizeof(float), nullptr, GL_DYNAMIC_DRAW);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, this->ssbo); // <-- binding = 0 matches the shader
 
     // 5) Set required uniforms (don’t rely on defaults)
-    glUniform1i(glGetUniformLocation(shaderProgram, "width"),  W);
-    glUniform1i(glGetUniformLocation(shaderProgram, "height"), H);
-    glUniform1i(glGetUniformLocation(shaderProgram, "flip"),   GL_FALSE); // or GL_TRUE
+    glUniform1i(glGetUniformLocation(this->shaderProgram, "width"),  W);
+    glUniform1i(glGetUniformLocation(this->shaderProgram, "height"), H);
+    glUniform1i(glGetUniformLocation(this->shaderProgram, "flip"),   GL_FALSE); // or GL_TRUE
+    glfwSetWindowUserPointer(this->window, this);
 
+    glfwSetMouseButtonCallback(this->window, [](GLFWwindow* window, int button, int action, int mods) {
+        Canvas* canvas = static_cast<Canvas*>(glfwGetWindowUserPointer(window));
+        if (!canvas) {
+            // throw error
+            std::cerr << "Error: Canvas pointer is null in MouseCallback\n";
+            return;
+        }
+        canvas->MouseCallback(window, button, action, mods);
+    });
+    glfwSetCursorPosCallback(this->window, [](GLFWwindow* window, double xpos, double ypos) {
+        Canvas* canvas = static_cast<Canvas*>(glfwGetWindowUserPointer(window));
+        if (!canvas) {
+            // throw error
+            std::cerr << "Error: Canvas pointer is null in MouseCallback\n";
+            return;
+        }
+        canvas->CursorPosCallback(window, xpos, ypos);
+    });
+    return;
+};
 
+void Canvas::CursorPosCallback(GLFWwindow* window, double xpos, double ypos) {
+    // Handle cursor position callback
+    if (!this->controls.dragging) return;
+    if (!this->cam) return;   // no camera attached → nothing to orbit
 
-    while (!glfwWindowShouldClose(win)) {
-        glClear(GL_COLOR_BUFFER_BIT);
-        glUseProgram(shaderProgram);
-        glBindVertexArray(VAO);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, ssbo);
-        glDrawArrays(GL_TRIANGLES, 0, 6);
+    double dx = xpos - this->controls.lastX;
+    double dy = ypos - this->controls.lastY;
+    this->controls.lastX = xpos;
+    this->controls.lastY = ypos;
 
-        glfwSwapBuffers(win);
-        glfwPollEvents();
+    // Convert pixels to degrees of orbit
+    float dAzimuth   = static_cast<float>(dx) * this->controls.orbitSpeedX;
+    float dElevation = static_cast<float>(-dy) * this->controls.orbitSpeedY;  // invert Y so drag up = look down, or flip if you prefer
 
+    std::cout << "Orbiting camera by (" << dAzimuth << ", " << dElevation << ")\n";
+    // This orbits RELATIVE to current azimuth/elevation
+    this->cam->orbit(dAzimuth, dElevation);
+}
+void Canvas::MouseCallback(GLFWwindow* window, int button, int action, int mods) {
+    // Handle mouse button callback
+    if (button == GLFW_MOUSE_BUTTON_LEFT) {
+        if (action == GLFW_PRESS) {
+            this->controls.dragging = true;
+            glfwGetCursorPos(window, &this->controls.lastX, &this->controls.lastY);
+        } else if (action == GLFW_RELEASE) {
+            this->controls.dragging = false;
+        }
     }
 }
 
+void Canvas::draw(float* pixel_out) {
+// Draw the contents of pixel_out to the screen
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, this->ssbo);
+    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, this->width*this->height*3*sizeof(float), pixel_out);
+
+
+    glClear(GL_COLOR_BUFFER_BIT);
+    glUseProgram(this->shaderProgram);
+    glBindVertexArray(this->VAO);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, this->ssbo);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+
+    glfwSwapBuffers(this->window);
+    glfwPollEvents();
+}

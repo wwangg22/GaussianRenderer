@@ -2,7 +2,8 @@ file(GLOB RENDER_SOURCES "*.cpp" "*.hpp")
 
 add_library(RENDER_LIBRARY ${RENDER_SOURCES})
 
-target_link_libraries(RENDER_LIBRARY PRIVATE 
+target_link_libraries(RENDER_LIBRARY 
+    PUBLIC 
     glfw 
     OpenGL::GL
     glad
