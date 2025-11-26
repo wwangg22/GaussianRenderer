@@ -1,35 +1,16 @@
+#include <cuda_runtime.h>
 #include <iostream>
 #include <fstream>
-#include <vector>
-#include <string>
 #include <sstream>
+#include <string>
+#include <vector>
+#include <unordered_set>
 #include <cstring>
 #include <cstdlib>
-#include <cmath>
-#include <unordered_set>
+#include "misc.cuh"
 #include "gaussians.hpp"
 
-template<typename T>
-inline float sigmoid(T x) {
-    return 1.0f / (1.0f + std::exp(-x));
-}
-
-void storeGaussianFromProperty(const Property& prop, Gaussian& g, float value){
-    switch (prop.type) {
-        case SlotType::X: g.x = value; break;
-        case SlotType::Y: g.y = value; break;
-        case SlotType::Z: g.z = value; break;
-        case SlotType::Normal: g.normals[prop.index] = value; break;
-        case SlotType::SH_DC: g.sh[prop.index] = value; break;
-        case SlotType::SH_REST: g.sh[3 + prop.index] = value; break;
-        case SlotType::Opacity: g.opacity = sigmoid(value); break;
-        case SlotType::Scale: g.scale[prop.index] = exp(value); break;
-        case SlotType::Rot: g.rot[prop.index] = value; break;
-        default: break; // Skip
-    }
-}
-
-std::vector<Gaussian> loadGaussiansFromPly(const std::string& filename) {
+Gaussian *loadGaussianCudaFromPly(const std::string& filename, int* out_numGaussians){
     std::ifstream file(filename, std::ios::binary);
     if (!file.is_open()) {
         std::cerr << "Failed to open file: " << filename << std::endl;
@@ -54,7 +35,7 @@ std::vector<Gaussian> loadGaussiansFromPly(const std::string& filename) {
         }
     }
     int numGaussians = std::stoi(line.substr(prefix.size()));
-    std::cout << "Number of gaussians: " << numGaussians;
+    *out_numGaussians = numGaussians;
 
     prefix = "property ";
     std::vector<Property> properties;
@@ -109,34 +90,51 @@ std::vector<Gaussian> loadGaussiansFromPly(const std::string& filename) {
     }
 
     // start reading data
-    std::vector<Gaussian> gaussians;
-
     if (format == "binary_little_endian 1.0") {
+        std::vector<Gaussian> h_gaussians(numGaussians);
+
         for (int i = 0; i < numGaussians; ++i) {
-            Gaussian g;
+            Gaussian g{};
             for (const auto& prop : properties) {
                 float value;
                 file.read(reinterpret_cast<char*>(&value), sizeof(float));
                 storeGaussianFromProperty(prop, g, value);
             }
-            // Only add if opacity > 0
-            // if (g.opacity > 0.0f) {
-            //     gaussians.push_back(g);
-            // }
-            gaussians.push_back(g);
+
+            h_gaussians[i] = g;
+
             if (i < 10){
-                // print gaussian position
-                std::cout << "\nGaussian " << i << ": ";
-                std::cout << g.x << ", " << g.y << ", " << g.z;
+                std::cout << "\nGaussian " << i << ": "
+                        << g.x << ", " << g.y << ", " << g.z;
             }
         }
-        // std::cout << "example gaussian: "<< gaussians[1].x << ", " << gaussians[1].y << ", " << gaussians[1].z << ", " << gaussians[1].opacity << std::endl;
-        return gaussians;
+
+        Gaussian* cuda_gaussians = nullptr;
+        cudaError_t err = cudaMalloc(&cuda_gaussians,
+                                    sizeof(Gaussian) * numGaussians);
+        if (err != cudaSuccess) {
+            std::cerr << "CUDA memory allocation failed: "
+                    << cudaGetErrorString(err) << std::endl;
+            return nullptr;
+        }
+
+        err = cudaMemcpy(cuda_gaussians,
+                        h_gaussians.data(),
+                        sizeof(Gaussian) * numGaussians,
+                        cudaMemcpyHostToDevice);
+        if (err != cudaSuccess) {
+            std::cerr << "CUDA memcpy failed: "
+                    << cudaGetErrorString(err) << std::endl;
+            cudaFree(cuda_gaussians);
+            return nullptr;
+        }
+
+        return cuda_gaussians;
     } else if (format != "ascii 1.0") {
         std::cerr << "Unsupported PLY format: " << format << std::endl;
-        return gaussians;
+        return nullptr;
     } else {
         std::cerr << "Unsupported PLY format: " << format << std::endl;
-        return gaussians;
+        return nullptr;
     }
 }

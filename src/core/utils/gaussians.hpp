@@ -7,6 +7,12 @@
 #include <cstring>
 #include <cstdlib>
 
+enum class SlotType { X, Y, Z, Normal, SH_DC, SH_REST, Opacity, Scale, Rot, Skip };
+
+struct Property {
+    SlotType type;
+    int index; // for properties that have multiple indices, like normals, SH, scale, rot
+};
 struct Gaussian {
     float x, y, z;
     float normals[3];
@@ -18,11 +24,9 @@ struct Gaussian {
     int aabb[4]; // x_min, y_min, x_max, y_max
     int px_x, px_y;
     uint64_t radix_id;
+    float X, Y, Z;
 
     float inv_covar[4]; // 2x2 inverse covariance matrix stored in row-major order
-
-
-    Gaussian();
 };
 
 struct lightWeightGaussian {
@@ -51,5 +55,5 @@ struct TilingInformation {
     }
 };
 
-
+void storeGaussianFromProperty(const Property& prop, Gaussian& g, float value);
 std::vector<Gaussian> loadGaussiansFromPly(const std::string& filename);

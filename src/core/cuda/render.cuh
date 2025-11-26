@@ -4,6 +4,7 @@
 
 #define TILE_SIZE 2048
 #include "gaussians.hpp"
+#include "camera.hpp"
 extern "C" void oneSweep3DGaussianSort(lightWeightGaussian* d_in, 
                                        int N, 
                                        int num_bits,
@@ -22,3 +23,9 @@ extern "C" void renderGaussiansNoTilingCUDA(float* out_pixels,
                                  lightWeightGaussian* sorted_gaussians,
                                  int num_gaussians,
                                  float* kernel_ms);
+
+extern "C" void preprocessCUDAGaussians(Gaussian* d_gaussians,
+    int num_gaussians,
+    Camera cam,
+    TilingInformation* d_tile_info,
+    float k);

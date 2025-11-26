@@ -1,4 +1,4 @@
-
+#pragma once
 void normalize(float vec[3]);
 void projectVectoVec(const float from[3], const float to[3], float out[3]);
 void dotProduct(const float a[3], const float b[3], float& out);
