@@ -25,6 +25,7 @@ extern "C" void renderGaussiansNoTilingCUDA(float* out_pixels,
                                  float* kernel_ms);
 
 extern "C" void preprocessCUDAGaussians(Gaussian* d_gaussians,
+    float* out_pixels,
     int num_gaussians,
     Camera cam,
     TilingInformation* d_tile_info,

@@ -16,6 +16,7 @@ public:
     void draw(float* pixel_out);
     void MouseCallback(GLFWwindow* window, int button, int action, int mods);
     void CursorPosCallback(GLFWwindow* window, double xpos, double ypos);
+    void ScrollCallback(GLFWwindow* window, double xoffset, double yoffset);
 
 private:
     unsigned int VBO;

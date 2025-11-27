@@ -225,7 +225,16 @@ extern "C" void oneSweep3DGaussianSort(lightWeightGaussian* d_in,
     lightWeightGaussian* out = d_output;
 
     globalBinCounter<<<NUM_BLOCKS, BLOCK_SIZE, SHARED_MEMORY_SIZE>>>(d_input, d_global_counter, numPasses, N);
+     cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        printf("globalBinCounter launch error: %s\n", cudaGetErrorString(err));
+    }
 
+    // Then check execution errors
+    err = cudaDeviceSynchronize();
+    if (err != cudaSuccess) {
+        printf("globalBinCounter runtime error: %s\n", cudaGetErrorString(err));
+    }
     for (int shift = 0; shift < numPasses; ++shift) {
         // cudaMemcpyToSymbol(gTileCounter, &zero, sizeof(int));
         cudaMemset(d_lookback, 0, TOTAL_TILES * (RADIX) * sizeof(int));
@@ -252,7 +261,7 @@ extern "C" void oneSweep3DGaussianSort(lightWeightGaussian* d_in,
     cudaFree(d_lookback);
 }
 
-static __global__ void renderGaussians(float* out_pixels, TilingInformation* tile_info, Gaussian* gaussians, lightWeightGaussian* sorted_gaussians ) {
+static __global__ void renderGaussians(float* out_pixels, TilingInformation* tile_info, int* tile_id_offset, Gaussian* gaussians, lightWeightGaussian* sorted_gaussians ) {
     extern __shared__ float buf[];
     float* shared_T = buf; // tile_info->height_stride * tile_info->width_stride
     float* shared_rgb = buf + tile_info->height_stride * tile_info->width_stride; // 3 * tile_info->height_stride * tile_info->width_stride
@@ -278,13 +287,13 @@ static __global__ void renderGaussians(float* out_pixels, TilingInformation* til
         int x_offset = tile_x * xs;
         int y_offset = tile_y * ys;
 
-        int tile_offset_end = tile_info->tile_id_offset[grid_id];
+        int tile_offset_end = tile_id_offset[grid_id];
         int tile_offset_start;
 
         if (grid_id == 0) {
             tile_offset_start = 0;
         } else {
-            tile_offset_start = tile_info->tile_id_offset[grid_id - 1];
+            tile_offset_start = tile_id_offset[grid_id - 1];
         }
 
         for (int idx = tile_offset_start; idx < tile_offset_end; ++idx) {
@@ -319,7 +328,6 @@ static __global__ void renderGaussians(float* out_pixels, TilingInformation* til
 
                 float md2 = dx * (inv_covar[0]*dx + inv_covar[1]*dy) + dy * (inv_covar[2]*dx + inv_covar[3]*dy);
                 float opacity = cur_gauss.opacity * expf(-0.5f * md2);
-                if (opacity < 1e-3f) continue;
                 opacity = fminf(opacity, 0.99f);
                 if (threadIdx.x == 0) {
                     shared_rgb[0] = dx;
@@ -330,6 +338,7 @@ static __global__ void renderGaussians(float* out_pixels, TilingInformation* til
                     shared_rgb[5] = aabb_xmax;
                     shared_rgb[6] = aabb_ymax;
                 }
+                if (opacity < 1e-3f) continue;
 
                 for (int c = 0; c < 3; ++c) {
                     shared_rgb[c*block_size + j] += cur_gauss.color[c] * opacity * shared_T[j];
@@ -411,7 +420,7 @@ extern "C" void renderGaussiansCUDA(float* out_pixels,
 
     size_t shared_mem_size = (tile_info->height_stride * tile_info->width_stride) * (1 + 3) * sizeof(float);
 
-    renderGaussians<<<NUM_BLOCKS, BLOCK_SIZE, shared_mem_size>>>(d_out, d_ti, d_g, d_sg);
+    // renderGaussians<<<NUM_BLOCKS, BLOCK_SIZE, shared_mem_size>>>(d_out, d_ti, d_g, d_sg);
 
     cudaEventRecord(ev_stop);
     cudaEventSynchronize(ev_stop);
@@ -708,6 +717,7 @@ static __global__ void cullGaussians(Gaussian* d_gaussians,
     }
 }
 static __global__ void advancedCullGaussians(Gaussian* d_gaussians,
+    Gaussian* d_tmp,
     Gaussian* d_output_gaussians,
     int num_gaussians,
     Camera cam,
@@ -788,7 +798,7 @@ static __global__ void advancedCullGaussians(Gaussian* d_gaussians,
             continue;
         }
         else {
-            d_gaussians[idx] = gauss;
+            d_tmp[idx] = gauss;
             int count = atomicAdd(&local_count, 1);
             shared_data[count] = idx;
         }
@@ -826,7 +836,7 @@ static __global__ void advancedCullGaussians(Gaussian* d_gaussians,
     __syncthreads();
 
     for (int i = threadIdx.x; i < local_count; i += blockDim.x) {
-        d_output_gaussians[offset + i] = d_gaussians[shared_data[i]];
+        d_output_gaussians[offset + i] = d_tmp[shared_data[i]];
     }
 }
 static __global__ void prepareGaussians(Gaussian* d_gaussians,
@@ -854,6 +864,8 @@ static __global__ void prepareGaussians(Gaussian* d_gaussians,
 
     int num_tile_x = d_tile_info->num_tile_x;
     int num_tile_y = d_tile_info->num_tile_y;
+    int tile_W = d_tile_info->W;
+    int tile_H = d_tile_info->H;
 
     float jacobian[6];
     float jacobian_T[6];
@@ -892,14 +904,16 @@ static __global__ void prepareGaussians(Gaussian* d_gaussians,
 
         buildRotMatFromQuat_cuda(gauss.rot, R);
         transpose3x3_cuda(R, R_T);
-        scale[0] = gauss.scale[0] * gauss.scale[0];
-        scale[1] = gauss.scale[1] * gauss.scale[1];
-        scale[2] = gauss.scale[2] * gauss.scale[2];
+        const float scale_mod = 1.0f;
+        scale[0] = scale_mod * gauss.scale[0];
+        scale[1] = scale_mod * gauss.scale[1];
+        scale[2] = scale_mod * gauss.scale[2];
         buildDiagonalMatrix_cuda(scale, scale_mat);
 
         // covar = R * S * R_T
         matMul3D_cuda(R, scale_mat, tmp);
-        matMul3D_cuda(tmp, R_T, covar);
+        matMul3D_cuda(tmp, scale_mat, R);
+        matMul3D_cuda(R, R_T, covar);
 
         // covar transform to world
         matMul3D_cuda(R_cam, covar, tmp);
@@ -909,10 +923,16 @@ static __global__ void prepareGaussians(Gaussian* d_gaussians,
         geMatMul_cuda(jacobian, covar, 2, 3, 3, tmp);
         float Sigma2D[2*2];
         geMatMul_cuda(tmp, jacobian_T, 2, 2, 3, Sigma2D);
+        Sigma2D[0] = (tile_W * 0.5f) * (tile_W * 0.5f) * Sigma2D[0];
+        Sigma2D[1] = (tile_W * 0.5f) * (tile_H * 0.5f) * Sigma2D[1];
+        Sigma2D[2] = (tile_H * 0.5f) * (tile_W * 0.5f) * Sigma2D[2];
+        Sigma2D[3] = (tile_H * 0.5f) * (tile_H * 0.5f) * Sigma2D[3];  
 
         float invSigma2D[4];
         float det = Sigma2D[0]*Sigma2D[3] - Sigma2D[1]*Sigma2D[2];
-        
+        if (det < 1e-8f) {
+            continue;
+        }
         float invDet = 1.0f / det;
         invSigma2D[0] =  Sigma2D[3] * invDet; invSigma2D[1] = -Sigma2D[1] * invDet;
         invSigma2D[2] = -Sigma2D[2] * invDet; invSigma2D[3] =  Sigma2D[0] * invDet;
@@ -936,10 +956,6 @@ static __global__ void prepareGaussians(Gaussian* d_gaussians,
         float lamb_1  = 0.5f*(tr + rad);
         float lamb_2  = 0.5f*(tr - rad);
         const float eps = 1e-8f;
-        if (!isfinite(lamb_1) || !isfinite(lamb_2)) {
-            // mark Gaussian as invisible / zero radius / skip tiling
-            continue;
-        }
         lamb_1 = fmaxf(lamb_1, eps);
         lamb_2 = fmaxf(lamb_2, eps);
         float theta = 0.5f * atan2f(2*sxy, dif); // in radians
@@ -951,20 +967,17 @@ static __global__ void prepareGaussians(Gaussian* d_gaussians,
         float s = sinf(theta);
         float ex = fabsf(r1*c) + fabsf(r2*s);
         float ey = fabsf(r1*s) + fabsf(r2*c);
+        ex /= tile_W/ 2.0f;
+        ey /= tile_H/ 2.0f;
         const float max_extent = 2.0f; // in NDC space
-        if (!isfinite(ex) || !isfinite(ey) || ex > max_extent || ey > max_extent) {
-            // Either skip this gaussian or clamp
-            ex = fminf(ex, max_extent);
-            ey = fminf(ey, max_extent);
-        }
 
         float xmin = new_xyz[0] - ex;
         float xmax = new_xyz[0] + ex;
         float ymin = new_xyz[1] - ey;
         float ymax = new_xyz[1] + ey;
 
-        if (xmax < -0.95f || xmin > 0.95f ||
-            ymax < -0.95f || ymin > 0.95f) {
+        if (xmax < -0.99f || xmin > 0.99f ||
+            ymax < -0.99f || ymin > 0.99f) {
             continue;
         }
 
@@ -1002,25 +1015,34 @@ static __global__ void prepareGaussians(Gaussian* d_gaussians,
         d_gaussians[idx] = gauss;
     }
 
-    __syncthreads();
+    // __syncthreads();
 
-    for (int i = threadIdx.x; i < num_tile_x * num_tile_y; i += blockDim.x) {
-        atomicAdd(&d_tile_info->tile_id_offset[i], offset_tile[i]);
-    }
+    // for (int i = threadIdx.x; i < num_tile_x * num_tile_y; i += blockDim.x) {
+    //     atomicAdd(&d_tile_info->tile_id_offset[i], offset_tile[i]);
+    // }
     __syncthreads();
     for (int i = threadIdx.x; i < num_tile_x * num_tile_y; i+= blockDim.x) {
         threadblock_offsets[(blockIdx.x) * (num_tile_x * num_tile_y) + i] = offset_tile[i];
     }
 }
 
-template <typename T>
-static __global__ void prefixSum(T* start, int stride, int tiles, int log2_tiles) {
+static __global__ void prefixSum(int* start, int stride, int tiles, int log2_tiles) {
     // we have to assume gridDim = 1
     int step = 0;
+    int bdx = (int)blockDim.x;
     while (step < log2_tiles){
         int movement = 1 << step;
-        for (int i = threadIdx.x; i < tiles-movement*stride; i += blockDim.x ) {
-            start[i + movement*stride] += start[i];
+        for (int i = (tiles-bdx); i >= (movement*stride - bdx + 1); i -= bdx) {
+            int idx = threadIdx.x + i;
+            int addval = 0;
+            if (idx >= movement*stride) {
+                addval = start[idx - movement*stride];
+            }
+            __syncthreads();
+            if (idx >= movement*stride) {
+                start[idx] += addval;
+            }
+            __syncthreads();
         }
         step+=1;
         __syncthreads();
@@ -1029,28 +1051,20 @@ static __global__ void prefixSum(T* start, int stride, int tiles, int log2_tiles
 
 static __global__ void buildLwgs(Gaussian* d_gaussians,
     lightWeightGaussian* d_lwgs, int num_gaussians,
-    Camera cam, float* threadblock_offsets,
+    Camera cam, int* threadblock_offsets,
+    int numBlocks,
     TilingInformation* d_tile_info) {
     // this function needs to be used with the SAME number of blocks/threads as prepareGaussians
-    extern __shared__ int offset_tile[]; // so for just idx it will store the local indices, for idx > num_tile_x * num_tile_y it will store the global offsets, and also the threadblock offsets after that
+    extern __shared__ int offset_tile[]; // so for just idx it will store the local indices
     int width_stride  = d_tile_info->width_stride;
     int height_stride = d_tile_info->height_stride;
 
     int num_tile_x = d_tile_info->num_tile_x;
     int num_tile_y = d_tile_info->num_tile_y;
     for (int idx = threadIdx.x; idx < num_tile_x * num_tile_y; idx += blockDim.x) {
-        if (idx == 0){
-            offset_tile[idx + num_tile_x * num_tile_y] = 0;
-        } else {
-            offset_tile[idx + num_tile_x * num_tile_y] = d_tile_info->tile_id_offset[idx-1];
-        }
-
-        if (blockIdx.x == 0) {
-            offset_tile[idx + 2 * num_tile_x * num_tile_y] = 0;
-        } else {
-            offset_tile[idx + 2 * num_tile_x * num_tile_y] = threadblock_offsets[(blockIdx.x - 1) * (num_tile_x * num_tile_y) + idx];
-        } 
+        offset_tile[idx] = 0;
     }
+    __syncthreads();
     lightWeightGaussian lwg;
 
     for (int idx = blockIdx.x * blockDim.x + threadIdx.x; idx < num_gaussians; idx += gridDim.x * blockDim.x) {
@@ -1068,22 +1082,28 @@ static __global__ void buildLwgs(Gaussian* d_gaussians,
             for (int j = min_y; j <= max_y; j++) {
                 int tile_idx = i + j * num_tile_x;
                 int cur_idx = atomicAdd(&offset_tile[tile_idx], 1);
-                int global_index = cur_idx + offset_tile[tile_idx + num_tile_x * num_tile_y] + offset_tile[tile_idx + 2 * num_tile_x * num_tile_y];
+                int threadb_offset = blockIdx.x == 0 ? 0 : threadblock_offsets[(blockIdx.x - 1) * (num_tile_x * num_tile_y) + tile_idx];
+                int glob_offset = tile_idx == 0 ? 0 : threadblock_offsets[(numBlocks-1) * (num_tile_x * num_tile_y) + tile_idx-1];
+                int global_index = cur_idx + glob_offset + threadb_offset;
 
                 lwg.gaussian_id = static_cast<uint32_t> (idx);
-                lwg.radix_id = (static_cast<uint64_t>(tile_idx) << 32) | static_cast<uint32_t> (gauss.z);
+                lwg.radix_id = (static_cast<uint64_t>(tile_idx) << 32) | static_cast<uint32_t> (-gauss.Z * 1e6f);
                 d_lwgs[global_index] = lwg;
                 // lwg.radix_id = static_cast<uint64_t> (gauss.z * 1e6f);
             }
         }
 
     }
-
-    
 }
 
-
+static int ceil_log2(int n) {
+    int k = 0;
+    int v = 1;
+    while (v < n) { v <<= 1; ++k; }
+    return k;
+}
 extern "C" void preprocessCUDAGaussians(Gaussian* d_gaussians,
+    float * out_pixels,
     int num_gaussians,
     Camera cam,
     TilingInformation* tile_info,
@@ -1095,7 +1115,7 @@ extern "C" void preprocessCUDAGaussians(Gaussian* d_gaussians,
     int width = BLOCK_SIZE * NUM_BLOCKS;
     int stride = (num_gaussians + width - 1) / width;
     
-    printf("preprocessCUDAGaussians: num_gaussians before cull = %d\n", num_gaussians);
+    // printf("preprocessCUDAGaussians: num_gaussians before cull = %d\n", num_gaussians);
 
     Gaussian* d_culled_gaussians; 
     cudaMalloc(&d_culled_gaussians, sizeof(Gaussian) * num_gaussians); // worst case all gaussians pass culling
@@ -1107,10 +1127,13 @@ extern "C" void preprocessCUDAGaussians(Gaussian* d_gaussians,
     int* d_threadblock_counts;
     cudaMalloc(&d_threadblock_counts, sizeof(int) * NUM_BLOCKS);
     cudaMemset(d_threadblock_counts, 0, sizeof(int) * NUM_BLOCKS);
+    Gaussian* d_tmp;
+    cudaMalloc(&d_tmp, sizeof(Gaussian) * num_gaussians);
 
     size_t cull_gaussian_shared_mem = sizeof(int) * BLOCK_SIZE * stride;
     advancedCullGaussians<<<NUM_BLOCKS, BLOCK_SIZE, cull_gaussian_shared_mem>>>(
         d_gaussians,
+        d_tmp,
         d_culled_gaussians,
         num_gaussians,
         cam,
@@ -1130,7 +1153,7 @@ extern "C" void preprocessCUDAGaussians(Gaussian* d_gaussians,
     int h_culled_count = 0;
     cudaMemcpy(&h_culled_count, d_culled_count, sizeof(int), cudaMemcpyDeviceToHost);
 
-    printf("preprocessCUDAGaussians: num_gaussians after cull = %d\n", h_culled_count);
+    // printf("preprocessCUDAGaussians: num_gaussians after cull = %d\n", h_culled_count);
 
     size_t* d_offsets = nullptr;
     int offsets_len = tile_info->num_tile_y * tile_info->num_tile_x;
@@ -1143,12 +1166,11 @@ extern "C" void preprocessCUDAGaussians(Gaussian* d_gaussians,
     cudaMalloc(&d_tile_info, sizeof(TilingInformation));
     cudaMemcpy(d_tile_info, tile_info, sizeof(TilingInformation),
             cudaMemcpyHostToDevice);
-    cudaMemset(d_threadblock_counts, 0, sizeof(int) * NUM_BLOCKS);
 
     size_t prepare_gaussian_shared_mem = (tile_info->num_tile_x * tile_info->num_tile_y) * sizeof(int);
     cudaFree(d_threadblock_counts);
-    cudaMalloc(&d_threadblock_counts, sizeof(int) * NUM_BLOCKS * (tile_info->num_tile_x * tile_info->num_tile_y + 1));
-    cudaMemset(d_threadblock_counts, 0, sizeof(int) * NUM_BLOCKS * (tile_info->num_tile_x * tile_info->num_tile_y + 1));
+    cudaMalloc(&d_threadblock_counts, sizeof(int) * NUM_BLOCKS * (tile_info->num_tile_x * tile_info->num_tile_y ));
+    cudaMemset(d_threadblock_counts, 0, sizeof(int) * NUM_BLOCKS * (tile_info->num_tile_x * tile_info->num_tile_y ));
 
     prepareGaussians<<<NUM_BLOCKS, BLOCK_SIZE, prepare_gaussian_shared_mem>>>(d_culled_gaussians, h_culled_count, cam, d_tile_info, d_threadblock_counts, 2.0f);
 
@@ -1163,10 +1185,11 @@ extern "C" void preprocessCUDAGaussians(Gaussian* d_gaussians,
         printf("prepareGaussians runtime error: %s\n", cudaGetErrorString(err));
     }
 
-    int log2_tiles = static_cast<int>(ceilf(log2f(static_cast<float>(tile_info->num_tile_x * tile_info->num_tile_y))));
-    prefixSum<<<1, 256>>>(d_threadblock_counts, tile_info->num_tile_y * tile_info->num_tile_x,  NUM_BLOCKS * (tile_info->num_tile_x * tile_info->num_tile_y), log2_tiles);
-
-    prefixSum<<<1, 256>>>(d_offsets, 1, tile_info->num_tile_x * tile_info->num_tile_y, log2_tiles);
+    int log2_blocks = ceil_log2(NUM_BLOCKS);
+    int log2_tiles = ceil_log2(tile_info->num_tile_x * tile_info->num_tile_y);
+    prefixSum<<<1, 256>>>(d_threadblock_counts, tile_info->num_tile_y * tile_info->num_tile_x,  NUM_BLOCKS * (tile_info->num_tile_x * tile_info->num_tile_y), log2_blocks);
+    prefixSum<<<1, 256>>>(d_threadblock_counts + (NUM_BLOCKS - 1) * (tile_info->num_tile_x * tile_info->num_tile_y), 1, (tile_info->num_tile_x * tile_info->num_tile_y), log2_tiles);
+    // prefixSum<<<1, 256>>>(d_offsets, 1, tile_info->num_tile_x * tile_info->num_tile_y, log2_tiles);
 
     err = cudaGetLastError();
     if (err != cudaSuccess) {
@@ -1178,40 +1201,118 @@ extern "C" void preprocessCUDAGaussians(Gaussian* d_gaussians,
     if (err != cudaSuccess) {
         printf("prepareGaussians runtime error: %s\n", cudaGetErrorString(err));
     }
-
-    std::vector<size_t> h_offsets(offsets_len);
-    cudaMemcpy(h_offsets.data(), d_offsets,
-               offsets_len * sizeof(size_t), cudaMemcpyDeviceToHost);
-    
-    printf("if_offset counts:\n");
-    printf("id_offset packed values (flags + counts):\n");
-    for (int b = 0; b < offsets_len; ++b) {
-        int v      = h_offsets[b];
-        printf("  count=%d\n", v);
+    int total_count;
+    cudaMemcpy(&total_count, &d_threadblock_counts[NUM_BLOCKS * (tile_info->num_tile_x * tile_info->num_tile_y) - 1], sizeof(int), cudaMemcpyDeviceToHost);
+    // std::cout << "Total count of culled gaussians: " << total_count << std::endl;
+    // print culled_count
+    lightWeightGaussian* d_lwgs;
+    cudaMalloc(&d_lwgs, sizeof(lightWeightGaussian) * total_count);
+    int * tile_offsets;
+    cudaMalloc(&tile_offsets, sizeof(int) * (tile_info->num_tile_x * tile_info->num_tile_y));
+    cudaMemcpy(tile_offsets, d_threadblock_counts + (NUM_BLOCKS - 1) * (tile_info->num_tile_x * tile_info->num_tile_y), sizeof(int) * (tile_info->num_tile_x * tile_info->num_tile_y), cudaMemcpyDeviceToDevice);
+    size_t build_lwg_shared_mem = (tile_info->num_tile_x * tile_info->num_tile_y) * sizeof(int);
+    buildLwgs<<<NUM_BLOCKS, BLOCK_SIZE, build_lwg_shared_mem>>>(
+        d_culled_gaussians,
+        d_lwgs,
+        h_culled_count,
+        cam,
+        d_threadblock_counts,
+        NUM_BLOCKS,
+        d_tile_info
+    );
+    err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        printf("build lwgs launch error: %s\n", cudaGetErrorString(err));
     }
 
+    // Then check execution errors
+    err = cudaDeviceSynchronize();
+    if (err != cudaSuccess) {
+        printf("build lwgs runtime error: %s\n", cudaGetErrorString(err));
+    }
+    int num_bits = 48;
+    int N = total_count;
+    int* d_global_counter;
+    int* d_lookback;
+    lightWeightGaussian* d_input;
+    lightWeightGaussian* d_output;
+    cudaMalloc(&d_output, N * sizeof(lightWeightGaussian));
+    int numPasses = (num_bits + 7) / 8;
+
+    BLOCK_SIZE = 256;
+    NUM_BLOCKS = 174;
     
+    int zero = 0;
 
-    std::vector<int> h_threadblock_counts(NUM_BLOCKS * (tile_info->num_tile_x * tile_info->num_tile_y + 1));
-    cudaMemcpy(h_threadblock_counts.data(),
-               d_threadblock_counts,
-               sizeof(int) * NUM_BLOCKS * (tile_info->num_tile_x * tile_info->num_tile_y + 1),
-               cudaMemcpyDeviceToHost);
+    int TOTAL_TILES = (N + TILE_SIZE - 1) / TILE_SIZE;
+    size_t SHARED_MEMORY_SIZE = RADIX * numPasses * (BLOCK_SIZE/32) * sizeof(int);
+    // std::cout << "Shared mem size: " << SHARED_MEMORY_SIZE / 1024 << " KB" << std::endl;
 
-    printf("Threadblock counts:\n");
-    printf("Threadblock packed values (flags + counts):\n");
-    for (int b = 0; b < NUM_BLOCKS; ++b) {
-        int v      = h_threadblock_counts[b * (tile_info->num_tile_x * tile_info->num_tile_y )];
-        int global = (v >> 31) & 1;          // top bit
-        int local  = (v >> 30) & 1;          // next bit
-        int count  = v & 0x3FFFFFFF;         // lower 30 bits
+    cudaMalloc(&d_global_counter, numPasses * (RADIX ) * sizeof(int));
+    cudaMalloc(&d_lookback, TOTAL_TILES * (RADIX) * sizeof(int));
+    cudaMalloc(&d_input, N * sizeof(lightWeightGaussian));
+    cudaMemset(d_global_counter, 0, numPasses * (RADIX) * sizeof(int));
 
-        printf("  block %3d: raw=%11d  global=%d  local=%d  count=%d\n",
-            b, v, global, local, count);
+    cudaMemcpy(d_input, d_lwgs, N * sizeof(lightWeightGaussian), cudaMemcpyDeviceToDevice);
+    cudaMemcpy(d_output, d_lwgs, N * sizeof(lightWeightGaussian), cudaMemcpyDeviceToDevice);
+
+    lightWeightGaussian* in = d_input;
+    lightWeightGaussian* out = d_output;
+
+    globalBinCounter<<<NUM_BLOCKS, BLOCK_SIZE, SHARED_MEMORY_SIZE>>>(d_input, d_global_counter, numPasses, N);
+    err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        printf("global bin  launch error: %s\n", cudaGetErrorString(err));
     }
 
+    // Then check execution errors
+    err = cudaDeviceSynchronize();
+    if (err != cudaSuccess) {
+        printf("global bin  runtime error: %s\n", cudaGetErrorString(err));
+    }
+    for (int shift = 0; shift < numPasses; ++shift) {
+        // cudaMemcpyToSymbol(gTileCounter, &zero, sizeof(int));
+        cudaMemset(d_lookback, 0, TOTAL_TILES * (RADIX) * sizeof(int));
+        oneSweep<<<TOTAL_TILES, BLOCK_SIZE>>>(in, out, d_lookback, d_global_counter, N, shift);
+        std::swap(in, out);
+        // cudaMemcpy(d_input, d_output, N * sizeof(int), cudaMemcpyDeviceToDevice);
+    }
+
+    lightWeightGaussian* result = (numPasses & 1) ? in : out; 
+    cudaMemcpy(d_lwgs, result, N * sizeof(lightWeightGaussian), cudaMemcpyDeviceToDevice);
+    float * d_out;
+    cudaMalloc(&d_out, sizeof(float) * 3 * tile_info->H * tile_info->W);
+    cudaMemset(d_out, 0, sizeof(float) * 3 * tile_info->H * tile_info->W);
+
+    BLOCK_SIZE = 256;
+    NUM_BLOCKS = 256;
+    
+    size_t shared_mem_size = (tile_info->height_stride * tile_info->width_stride) * (1 + 3) * sizeof(float);
+    renderGaussians<<<NUM_BLOCKS, BLOCK_SIZE, shared_mem_size>>>(d_out, d_tile_info, tile_offsets, d_culled_gaussians, d_lwgs);
+    cudaMemcpy(out_pixels, d_out, sizeof(float) * 3 * tile_info->H * tile_info->W, cudaMemcpyDeviceToHost);
+    err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        printf("one sweep launch error: %s\n", cudaGetErrorString(err));
+    }
+
+    // Then check execution errors
+    err = cudaDeviceSynchronize();
+    if (err != cudaSuccess) {
+        printf("one sweep runtime error: %s\n", cudaGetErrorString(err));
+    }
+    
+
+    cudaFree(tile_offsets);
+    cudaFree(d_tmp);
+    cudaFree(d_global_counter);
+    cudaFree(d_input);
+    cudaFree(d_output);
+    cudaFree(d_lookback);
+    cudaFree(d_out);
     cudaFree(d_culled_gaussians);
     cudaFree(d_culled_count);
     cudaFree(d_threadblock_counts);
     cudaFree(d_offsets);
+    cudaFree(d_tile_info);
+    cudaFree(d_lwgs);
 }

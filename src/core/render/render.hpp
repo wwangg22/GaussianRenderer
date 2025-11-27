@@ -14,6 +14,7 @@ struct OrbitControls {
     bool   dragging = false;
     double lastX    = 0.0;
     double lastY    = 0.0;
+    float zoomSpeed   = 0.1f; 
 
     // tweak these until it feels right
     float orbitSpeedX = 0.3f;  // degrees per pixel horizontally (azimuth)

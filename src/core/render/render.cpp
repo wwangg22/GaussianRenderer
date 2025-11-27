@@ -194,9 +194,6 @@ void transformAndTileGaussians(std::vector<Gaussian>& g, std::vector<lightWeight
         scale[0] = scale_mod * gauss.scale[0];
         scale[1] = scale_mod * gauss.scale[1];
         scale[2] = scale_mod * gauss.scale[2];
-        //print out the scale:
-        // std::cout << "Scale for gaussian " << idx << ": ";
-        // std::cout << scale[0] << ", " << scale[1] << ", " << scale[2] << "\n";
         buildDiagonalMatrix(scale, scale_mat);
 
         // // print scale matrix 
@@ -246,7 +243,7 @@ void transformAndTileGaussians(std::vector<Gaussian>& g, std::vector<lightWeight
         float invSigma2D[4];
         float det = Sigma2D[0]*Sigma2D[3] - Sigma2D[1]*Sigma2D[2];
         if (det < 1e-8f) {
-            std::cout << "Warning: Singular Covariance Matrix for gaussian " << idx << ". Skipping.\n";
+            // std::cout << "Warning: Singular Covariance Matrix for gaussian " << idx << ". Skipping.\n";
             continue;
         }
         float invDet = 1.0f / det;

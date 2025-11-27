@@ -125,6 +125,15 @@ void Canvas::init() {
         }
         canvas->CursorPosCallback(window, xpos, ypos);
     });
+
+    glfwSetScrollCallback(this->window, [](GLFWwindow* window, double xoffset, double yoffset) {
+        Canvas* canvas = static_cast<Canvas*>(glfwGetWindowUserPointer(window));
+        if (!canvas) {
+            std::cerr << "Error: Canvas pointer is null in ScrollCallback\n";
+            return;
+        }
+        canvas->ScrollCallback(window, xoffset, yoffset);
+    });
     return;
 };
 
@@ -139,12 +148,26 @@ void Canvas::CursorPosCallback(GLFWwindow* window, double xpos, double ypos) {
     this->controls.lastY = ypos;
 
     // Convert pixels to degrees of orbit
-    float dAzimuth   = static_cast<float>(dx) * this->controls.orbitSpeedX;
-    float dElevation = static_cast<float>(-dy) * this->controls.orbitSpeedY;  // invert Y so drag up = look down, or flip if you prefer
+    float dAzimuth   = static_cast<float>(-dx) * this->controls.orbitSpeedX;
+    float dElevation = static_cast<float>(dy) * this->controls.orbitSpeedY;  // invert Y so drag up = look down, or flip if you prefer
 
     std::cout << "Orbiting camera by (" << dAzimuth << ", " << dElevation << ")\n";
     // This orbits RELATIVE to current azimuth/elevation
     this->cam->orbit(dAzimuth, dElevation);
+}
+void Canvas::ScrollCallback(GLFWwindow* window, double xoffset, double yoffset) {
+    if (!this->cam) return;
+
+    // yoffset > 0 : scroll up
+    // yoffset < 0 : scroll down
+    float zoomDelta = static_cast<float>(yoffset) * this->controls.zoomSpeed;
+
+    // Convention: positive delta = zoom in (or out) depending on your Camera::zoom
+    this->cam->zoom(zoomDelta);
+
+    // Optional debug:
+    // std::cout << "Zoom scroll yoffset=" << yoffset
+    //           << " -> zoomDelta=" << zoomDelta << "\n";
 }
 void Canvas::MouseCallback(GLFWwindow* window, int button, int action, int mods) {
     // Handle mouse button callback
@@ -157,6 +180,8 @@ void Canvas::MouseCallback(GLFWwindow* window, int button, int action, int mods)
         }
     }
 }
+
+
 
 void Canvas::draw(float* pixel_out) {
 // Draw the contents of pixel_out to the screen
