@@ -1,10 +1,10 @@
 #include "canvas.hpp"
+#include "gaussians.hpp"
 
-
-Canvas::Canvas(int height, int width) {
+Canvas::Canvas(int height_, int width_, int tile_x, int tile_y): width(width_), height(height_), 
+    window(nullptr, glfwDestroyWindow), d_out_pixels(height_ * width_ * 3), 
+    tile_info(tile_x, tile_y, height_, width_), initial_cap(width_*height_) {
     // Initialize canvas with tiling info
-    this->width = width;
-    this->height = height;
 }
 void Canvas::init() {
     if (!glfwInit()) {
@@ -20,14 +20,14 @@ void Canvas::init() {
 #endif
 
     const int W = this->width, H = this->height;
-    this->window = glfwCreateWindow(W, H, "My Blank Viewer", nullptr, nullptr);
+    this->window.reset(glfwCreateWindow(W, H, "My Blank Viewer", nullptr, nullptr));
     if (!this->window) {
         std::cerr << "Failed to create window\n";
         glfwTerminate();
         return;
     }
 
-    glfwMakeContextCurrent(this->window);
+    glfwMakeContextCurrent(this->window.get());
     glfwSwapInterval(1); // vsync
     if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
         std::cerr << "Failed to initialize GLAD\n";
@@ -105,9 +105,9 @@ void Canvas::init() {
     glUniform1i(glGetUniformLocation(this->shaderProgram, "width"),  W);
     glUniform1i(glGetUniformLocation(this->shaderProgram, "height"), H);
     glUniform1i(glGetUniformLocation(this->shaderProgram, "flip"),   GL_FALSE); // or GL_TRUE
-    glfwSetWindowUserPointer(this->window, this);
+    glfwSetWindowUserPointer(this->window.get(), this);
 
-    glfwSetMouseButtonCallback(this->window, [](GLFWwindow* window, int button, int action, int mods) {
+    glfwSetMouseButtonCallback(this->window.get(), [](GLFWwindow* window, int button, int action, int mods) {
         Canvas* canvas = static_cast<Canvas*>(glfwGetWindowUserPointer(window));
         if (!canvas) {
             // throw error
@@ -116,7 +116,7 @@ void Canvas::init() {
         }
         canvas->MouseCallback(window, button, action, mods);
     });
-    glfwSetCursorPosCallback(this->window, [](GLFWwindow* window, double xpos, double ypos) {
+    glfwSetCursorPosCallback(this->window.get(), [](GLFWwindow* window, double xpos, double ypos) {
         Canvas* canvas = static_cast<Canvas*>(glfwGetWindowUserPointer(window));
         if (!canvas) {
             // throw error
@@ -126,7 +126,20 @@ void Canvas::init() {
         canvas->CursorPosCallback(window, xpos, ypos);
     });
 
-    glfwSetScrollCallback(this->window, [](GLFWwindow* window, double xoffset, double yoffset) {
+    glfwSetFramebufferSizeCallback(window.get(),
+        [](GLFWwindow* win, int fbW, int fbH) {
+            glViewport(0, 0, fbW, fbH);
+
+            // Get your Canvas instance back
+            auto* canvas = static_cast<Canvas*>(glfwGetWindowUserPointer(win));
+            if (!canvas) return;
+
+            canvas->onResize(fbW, fbH);
+        }
+    );
+    glfwSetWindowUserPointer(window.get(), this);
+
+    glfwSetScrollCallback(this->window.get(), [](GLFWwindow* window, double xoffset, double yoffset) {
         Canvas* canvas = static_cast<Canvas*>(glfwGetWindowUserPointer(window));
         if (!canvas) {
             std::cerr << "Error: Canvas pointer is null in ScrollCallback\n";
@@ -136,6 +149,34 @@ void Canvas::init() {
     });
     return;
 };
+
+void Canvas::onResize(int fbW, int fbH) {
+    width  = fbW;
+    height = fbH;
+
+    cam->setAspectRatio(static_cast<float>(width) / static_cast<float>(height));
+    cam->updateCameraMatrices();
+
+    this->d_out_pixels.resize(width * height * 3);
+    this->tile_info.resize(height,width);
+
+    if ((fbW * fbH) > this->initial_cap) {
+        // handle reallocating ssbo
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, this->ssbo);
+        glBufferData(GL_SHADER_STORAGE_BUFFER, fbW*fbH*3*sizeof(float), nullptr, GL_DYNAMIC_DRAW);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, this->ssbo);
+        this->initial_cap = fbW * fbH;
+    }
+    // update new viewport
+    glViewport(0, 0, fbW, fbH);
+
+    //  update fragment shaders index
+    glUseProgram(this->shaderProgram);
+    glUniform1i(glGetUniformLocation(this->shaderProgram, "width"),  fbW);
+    glUniform1i(glGetUniformLocation(this->shaderProgram, "height"), fbH);
+    glUniform1i(glGetUniformLocation(this->shaderProgram, "flip"),   GL_FALSE);
+
+}
 
 void Canvas::CursorPosCallback(GLFWwindow* window, double xpos, double ypos) {
     // Handle cursor position callback
@@ -195,6 +236,6 @@ void Canvas::draw(float* pixel_out) {
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, this->ssbo);
     glDrawArrays(GL_TRIANGLES, 0, 6);
 
-    glfwSwapBuffers(this->window);
+    glfwSwapBuffers(this->window.get());
     glfwPollEvents();
 }

@@ -9,8 +9,6 @@ struct Vertex {
     
 };
 struct OrbitControls {
-    Camera* cam = nullptr;
-
     bool   dragging = false;
     double lastX    = 0.0;
     double lastY    = 0.0;

@@ -2,18 +2,27 @@
 #include "render.hpp"
 #include <glad/glad.h> 
 #include <GLFW/glfw3.h>
+#include "gaussians.hpp"
+
 
 class Canvas {
 public: 
     int width;
     int height;
-    GLFWwindow* window;
+    int initial_cap;
+    using windowPtr = std::unique_ptr<GLFWwindow, decltype(&glfwDestroyWindow)>;
+    windowPtr window;
     Camera* cam;
     OrbitControls controls;
+    std::vector<float> d_out_pixels;
+    TilingInformation tile_info;
+
  
-    Canvas( int height, int width);
+    Canvas( int height_, int width_, int tile_x, int tile_y);
+    ~Canvas() = default;
     void init();
     void draw(float* pixel_out);
+    void onResize(int fbW, int fbH);
     void MouseCallback(GLFWwindow* window, int button, int action, int mods);
     void CursorPosCallback(GLFWwindow* window, double xpos, double ypos);
     void ScrollCallback(GLFWwindow* window, double xoffset, double yoffset);

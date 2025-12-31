@@ -34,25 +34,27 @@ struct lightWeightGaussian {
     uint32_t gaussian_id; // index in the original Gaussian array
 };
 
+
 struct TilingInformation {
     int num_tile_y;
     int num_tile_x;
-    size_t H;
-    size_t W;
-    size_t* tile_id_offset;
-    size_t height_stride;
-    size_t width_stride;
+    int H;
+    int W;
+    std::vector<int> tile_id_offset;
+    int height_stride;
+    int width_stride;
 
-    TilingInformation(int ny, int nx, size_t h, size_t w) : num_tile_y(ny), num_tile_x(nx), H(h), W(w) {
-        tile_id_offset = new size_t[num_tile_y * num_tile_x];
-        std::memset(tile_id_offset, 0, sizeof(size_t) * num_tile_y * num_tile_x);
-
-        width_stride  = std::max(1, static_cast<int> ((W + num_tile_x - 1) / num_tile_x));
-        height_stride = std::max(1, static_cast<int> ((H + num_tile_y - 1) / num_tile_y));
+    TilingInformation(int ny, int nx, int h, int w) : num_tile_y(ny), num_tile_x(nx), H(h), W(w), tile_id_offset(ny*nx) {
+        width_stride  = std::max<int>(1, (W + num_tile_x - 1) / num_tile_x);
+        height_stride = std::max<int>(1, (H + num_tile_y - 1) / num_tile_y);
     }
-    ~TilingInformation() {
-        delete[] tile_id_offset;
-    }
+    void resize(int h, int w) {
+        this->H = h;
+        this->W = w;
+        width_stride  = std::max<int>(1, (W + num_tile_x - 1) / num_tile_x);
+        height_stride = std::max<int>(1, (H + num_tile_y - 1) / num_tile_y);
+    };
+    ~TilingInformation() = default;
 };
 
 void storeGaussianFromProperty(const Property& prop, Gaussian& g, float value);
