@@ -9,8 +9,11 @@ This project focuses on building a high-performance Gaussian Renderer with suppo
 - [X] Create Datastructures and Parsing code for 3D Gaussians (finished 9/28/2025)
 - [X] Implement Interactive Viewer (be able to move around in 3D space, while providing data on view) (finished 10/1/2025)
 - [X] Implement Pre-Processing on GPU (culling gaussians, tiling, sorting) (finished on 10/30/2025) Busy semester :(
-- [ ] Finish 3D Gaussian Rendering Pipeline
+- [X] Finish 3D Gaussian Rendering Pipeline (finished 11/28/2025)
+- [X] Add dynamic resizing (finished 12/31/2025)
 - [ ] Add interactive features like drag and drop to load
+- [ ] Add 4D gaussian support
+- [ ] Add streaming training process
 
 ---
 
