@@ -11,6 +11,7 @@ This project focuses on building a high-performance Gaussian Renderer with suppo
 - [X] Implement Pre-Processing on GPU (culling gaussians, tiling, sorting) (finished on 10/30/2025) Busy semester :(
 - [X] Finish 3D Gaussian Rendering Pipeline (finished 11/28/2025)
 - [X] Add dynamic resizing (finished 12/31/2025)
+- [ ] benchmark performance -> add improvements like arranging gaussians in 3D morton order (done in og paper as well)
 - [ ] Add interactive features like drag and drop to load
 - [ ] Add 4D gaussian support
 - [ ] Add streaming training process
