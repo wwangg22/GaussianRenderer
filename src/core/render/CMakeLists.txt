@@ -7,6 +7,7 @@ target_link_libraries(RENDER_LIBRARY
     glfw 
     OpenGL::GL
     glad
+    imgui
 )
 
 find_package(OpenGL REQUIRED)

@@ -48,9 +48,11 @@ struct TilingInformation {
         width_stride  = std::max<int>(1, (W + num_tile_x - 1) / num_tile_x);
         height_stride = std::max<int>(1, (H + num_tile_y - 1) / num_tile_y);
     }
-    void resize(int h, int w) {
+    void resize(int h, int w, int num_tile_x_, int num_tile_y_) {
         this->H = h;
         this->W = w;
+        this->num_tile_x = num_tile_x_;
+        this->num_tile_y = num_tile_y_;
         width_stride  = std::max<int>(1, (W + num_tile_x - 1) / num_tile_x);
         height_stride = std::max<int>(1, (H + num_tile_y - 1) / num_tile_y);
     };

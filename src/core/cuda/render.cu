@@ -487,6 +487,8 @@ static __global__ void advancedCullGaussians(Gaussian* d_gaussians,
     int width = blockDim.x * gridDim.x;
     int stride = (num_gaussians + width - 1) / width;
 
+    float znear = cam.nearClip;
+
     int start = stride * blockIdx.x * blockDim.x + threadIdx.x;
     int end = min(stride * (blockIdx.x + 1) * blockDim.x, num_gaussians);
     if (threadIdx.x == 0){
@@ -538,6 +540,7 @@ static __global__ void advancedCullGaussians(Gaussian* d_gaussians,
         gauss.X = tmp_xyz[0];
         gauss.Y = tmp_xyz[1];
         gauss.Z = tmp_xyz[2];
+        if (!isfinite(tmp_xyz[0]) || !isfinite(tmp_xyz[1]) || !isfinite(tmp_xyz[2])) continue;
 
         matVecMul4D_cuda(P, tmp_xyz, new_xyz);
         new_xyz[0] = new_xyz[0] / new_xyz[3];
@@ -547,7 +550,8 @@ static __global__ void advancedCullGaussians(Gaussian* d_gaussians,
         gauss.x = new_xyz[0];
         gauss.y = new_xyz[1];
         gauss.z = new_xyz[2];
-        if (tmp_xyz[2] >= 0 || new_xyz[2] < -1.0f || new_xyz[2] > 1.0f) {
+        if (!isfinite(new_xyz[0]) || !isfinite(new_xyz[1]) || !isfinite(new_xyz[2])) continue;
+        if (tmp_xyz[2] >= -znear || new_xyz[2] < -1.0f || new_xyz[2] > 1.0f) {
             continue;
         }
         else {
@@ -641,7 +645,7 @@ static __global__ void prepareGaussians(Gaussian* d_gaussians,
         X=gauss.X;
         Y=gauss.Y;
         Z=gauss.Z;
-
+        
         float new_xyz[3];
         new_xyz[0] = gauss.x;
         new_xyz[1] = gauss.y;
@@ -683,7 +687,7 @@ static __global__ void prepareGaussians(Gaussian* d_gaussians,
 
         float invSigma2D[4];
         float det = Sigma2D[0]*Sigma2D[3] - Sigma2D[1]*Sigma2D[2];
-        if (det < 1e-8f) {
+        if (!isfinite(det) || det < 1e-8f) {
             d_gaussians[idx] = gauss;
             continue;
         }
@@ -875,7 +879,7 @@ extern "C" void preprocessCUDAGaussians(Gaussian* d_gaussians,
     int tile_W,
     int tile_H,
     float k) {
-    
+
     int BLOCK_SIZE = 256;
     int NUM_BLOCKS = 128;
 
@@ -920,15 +924,13 @@ extern "C" void preprocessCUDAGaussians(Gaussian* d_gaussians,
     int h_culled_count = 0;
     cudaMemcpy(&h_culled_count, d_culled_count, sizeof(int), cudaMemcpyDeviceToHost);
 
-    // printf("preprocessCUDAGaussians: num_gaussians after cull = %d\n", h_culled_count);
-
     size_t prepare_gaussian_shared_mem = (num_tile_x * num_tile_y) * sizeof(int);
     cudaFree(d_threadblock_counts);
     cudaMalloc(&d_threadblock_counts, sizeof(int) * NUM_BLOCKS * (num_tile_x * num_tile_y ));
     cudaMemset(d_threadblock_counts, 0, sizeof(int) * NUM_BLOCKS * (num_tile_x * num_tile_y ));
 
     prepareGaussians<<<NUM_BLOCKS, BLOCK_SIZE, prepare_gaussian_shared_mem>>>(d_culled_gaussians, h_culled_count, cam, 
-        width_stride, height_stride, num_tile_x, num_tile_y, tile_W, tile_H, d_threadblock_counts, 2.0f);
+        width_stride, height_stride, num_tile_x, num_tile_y, tile_W, tile_H, d_threadblock_counts, k);
 
     err = cudaGetLastError();
     if (err != cudaSuccess) {
@@ -959,8 +961,8 @@ extern "C" void preprocessCUDAGaussians(Gaussian* d_gaussians,
     }
     int total_count;
     cudaMemcpy(&total_count, &d_threadblock_counts[NUM_BLOCKS * (num_tile_x * num_tile_y) - 1], sizeof(int), cudaMemcpyDeviceToHost);
-    // std::cout << "Total count of culled gaussians: " << total_count << std::endl;
-    // print culled_count
+
+
     lightWeightGaussian* d_lwgs;
     cudaMalloc(&d_lwgs, sizeof(lightWeightGaussian) * total_count);
     int * tile_offsets;

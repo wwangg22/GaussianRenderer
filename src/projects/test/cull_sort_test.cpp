@@ -1,4 +1,5 @@
 #include <chrono>
+#include <cstdio>
 #include <cuda_runtime.h>
 
 #include "render.cuh"
@@ -11,6 +12,11 @@
 
 const int width = 2000;
 const int height = 1500;
+
+
+double ema_ms = 0.0;
+const double alpha = 0.1; // smoothing
+
 int main(int argc, char* argv[]){
     if (argc != 2) {
         std::cerr << "Usage: " << argv[0] << " <path_to_ply_file>\n";
@@ -19,9 +25,9 @@ int main(int argc, char* argv[]){
     float p[3] = {-1.5f, -1.5f, -3.0f};
     Camera cam;
     cam.w_up[0] = 0.0f; cam.w_up[1] = -1.0f; cam.w_up[2] = 0.0f;
-    cam.setFovY(90.0f);
+    cam.setFovY(120.0f);
     cam.setAspectRatio(static_cast<float>(width) / static_cast<float>(height));
-    cam.setClippingPlanes(0.1f, 100.0f);
+    cam.setClippingPlanes(2.5f, 100.0f);
     cam.setPosition(p);
     cam.updateCameraMatrices();
     cam.updateFrustumPlanes();
@@ -35,16 +41,28 @@ int main(int argc, char* argv[]){
         return 1;
     }
     std::cout << "Loaded " << numGaussians << " gaussians from " << filename << std::endl;
-    
-    Canvas canvas(height, width, 64, 64);
-    canvas.init();
+    int num_tile_x = 50;
+    int num_tile_y = 50;
+    Canvas canvas(height, width, num_tile_x, num_tile_y);
     canvas.cam = &cam;
+    canvas.init();
+    
 
     while (true) {
+        auto t0 = std::chrono::high_resolution_clock::now();
         preprocessCUDAGaussians(d_gaussians, canvas.d_out_pixels.data(), numGaussians, cam, 
                 canvas.tile_info.num_tile_y, canvas.tile_info.num_tile_x, canvas.tile_info.width_stride,
-                canvas.tile_info.height_stride, canvas.tile_info.W, canvas.tile_info.H, 3.0f);
+                canvas.tile_info.height_stride, canvas.tile_info.W, canvas.tile_info.H, 1.5f);
         canvas.draw(canvas.d_out_pixels.data());
+        auto t1 = std::chrono::high_resolution_clock::now();
+        double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+
+        ema_ms = (ema_ms == 0.0) ? ms : (alpha * ms + (1.0 - alpha) * ema_ms);
+
+        static int frame = 0;
+        if ((frame++ % 60) == 0) {
+            printf("frame: %.3f ms  (%.1f FPS)\n", ema_ms, 1000.0 / ema_ms);
+        }
     }
  
     cudaFree(d_gaussians);

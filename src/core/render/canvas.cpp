@@ -1,11 +1,19 @@
 #include "canvas.hpp"
 #include "gaussians.hpp"
+#include "imgui.h"
+#include "imgui_impl_glfw.h"
+#include "imgui_impl_opengl3.h"
 
 Canvas::Canvas(int height_, int width_, int tile_x, int tile_y): width(width_), height(height_), 
     window(nullptr, glfwDestroyWindow), d_out_pixels(height_ * width_ * 3), 
     tile_info(tile_x, tile_y, height_, width_), initial_cap(width_*height_) {
     // Initialize canvas with tiling info
-}
+};
+Canvas::~Canvas() {
+    ImGui_ImplOpenGL3_Shutdown();
+    ImGui_ImplGlfw_Shutdown();
+    ImGui::DestroyContext();
+};
 void Canvas::init() {
     if (!glfwInit()) {
         std::cerr << "Failed to init GLFW\n";
@@ -33,6 +41,8 @@ void Canvas::init() {
         std::cerr << "Failed to initialize GLAD\n";
         return;
     }  
+
+
     glViewport(0, 0, W, H);
 
     // initialize vertex BUFFER OBJECT (VBO)
@@ -147,6 +157,22 @@ void Canvas::init() {
         }
         canvas->ScrollCallback(window, xoffset, yoffset);
     });
+
+    //setup imgui
+    // Setup Dear ImGui context
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO& io= ImGui::GetIO();
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
+
+    // Setup Platform/Renderer backends
+    ImGui_ImplGlfw_InitForOpenGL(this->window.get(), true);          // Second param install_callback=true will install GLFW callbacks and chain to existing ones.
+    ImGui_ImplOpenGL3_Init();
+    
+    this->settings.num_tile_x = this->tile_info.num_tile_x;
+    this->settings.num_tile_y = this->tile_info.num_tile_y;
+    this->settings.fov = this->cam->fovY;
     return;
 };
 
@@ -158,7 +184,7 @@ void Canvas::onResize(int fbW, int fbH) {
     cam->updateCameraMatrices();
 
     this->d_out_pixels.resize(width * height * 3);
-    this->tile_info.resize(height,width);
+    this->tile_info.resize(height,width, this->tile_info.num_tile_x, this->tile_info.num_tile_y);
 
     if ((fbW * fbH) > this->initial_cap) {
         // handle reallocating ssbo
@@ -192,7 +218,6 @@ void Canvas::CursorPosCallback(GLFWwindow* window, double xpos, double ypos) {
     float dAzimuth   = static_cast<float>(-dx) * this->controls.orbitSpeedX;
     float dElevation = static_cast<float>(dy) * this->controls.orbitSpeedY;  // invert Y so drag up = look down, or flip if you prefer
 
-    std::cout << "Orbiting camera by (" << dAzimuth << ", " << dElevation << ")\n";
     // This orbits RELATIVE to current azimuth/elevation
     this->cam->orbit(dAzimuth, dElevation);
 }
@@ -222,10 +247,47 @@ void Canvas::MouseCallback(GLFWwindow* window, int button, int action, int mods)
     }
 }
 
+void Canvas::debugWindow() {
+    ImGui::Begin("Settings", &settings.show_settings);
 
+    // Renderer-ish
+    ImGui::Checkbox("Flip Y", &settings.flip);
+    ImGui::SliderFloat("k-sigma (splat radius)", &settings.k_sigma, 0.1f, 8.0f, "%.2f");
+
+
+    // Controls
+
+    if (ImGui::SliderFloat("fovY", &settings.fov, 75.0f, 120.0f, "%.2f")) {
+        this->cam->setFovY(settings.fov);
+    };
+
+
+    ImGui::Checkbox("Lock X/Y tiles", &settings.lock_tiles);
+
+    bool x_changed = ImGui::SliderInt("X tiles", &settings.num_tile_x, 40, 64);
+
+        
+    bool y_changed = false;
+    ImGui::BeginDisabled(settings.lock_tiles);
+    y_changed = ImGui::SliderInt("Y tiles", &settings.num_tile_y, 40, 64);
+    ImGui::EndDisabled();
+
+    if (settings.lock_tiles && x_changed) {
+        settings.num_tile_y = settings.num_tile_x;
+    }
+    if ((x_changed || y_changed)) {
+        this->tile_info.resize(tile_info.H, tile_info.W, settings.num_tile_x, settings.num_tile_y);
+    }
+
+    ImGui::End();
+};
 
 void Canvas::draw(float* pixel_out) {
-// Draw the contents of pixel_out to the screen
+    ImGui_ImplOpenGL3_NewFrame();
+    ImGui_ImplGlfw_NewFrame();
+    ImGui::NewFrame();
+    this->debugWindow();
+    // Draw the contents of pixel_out to the screen
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, this->ssbo);
     glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, this->width*this->height*3*sizeof(float), pixel_out);
 
@@ -235,6 +297,9 @@ void Canvas::draw(float* pixel_out) {
     glBindVertexArray(this->VAO);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, this->ssbo);
     glDrawArrays(GL_TRIANGLES, 0, 6);
+
+    ImGui::Render();
+    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
     glfwSwapBuffers(this->window.get());
     glfwPollEvents();

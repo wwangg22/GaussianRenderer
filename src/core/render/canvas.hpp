@@ -4,6 +4,20 @@
 #include <GLFW/glfw3.h>
 #include "gaussians.hpp"
 
+struct UiSettings {
+    bool show_settings = true;
+    bool flip = false;
+    float k_sigma = 3.0f;          // your 'k' for radius
+    float exposure = 1.0f;         // example post-param
+    float zoomSpeed = 0.10f;
+    float orbitSpeedX = 0.25f;
+    float orbitSpeedY = 0.25f;
+    int num_tile_x = 40;
+    int num_tile_y = 40;
+    bool lock_tiles = true;
+    float fov = 90.0f;
+};
+
 
 class Canvas {
 public: 
@@ -19,7 +33,7 @@ public:
 
  
     Canvas( int height_, int width_, int tile_x, int tile_y);
-    ~Canvas() = default;
+    ~Canvas();
     void init();
     void draw(float* pixel_out);
     void onResize(int fbW, int fbH);
@@ -35,6 +49,9 @@ private:
     unsigned int vertexShader;
     unsigned int fragmentShader;
     unsigned int shaderProgram;
+
+    UiSettings settings{};
+    void debugWindow();
 
     GLuint ssbo=0;
 
