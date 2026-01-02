@@ -18,7 +18,11 @@ This project focuses on building a high-performance Gaussian Renderer with suppo
 
 ---
 ## DEMO
-<video src="demos/demo_1_2.mp4" controls muted playsinline style="max-width: 100%;"></video>
+
+
+https://github.com/user-attachments/assets/80a99d48-576b-4fa5-a339-66aa760d750c
+
+
 
 ## OVERALL Objectives
 - [ ] Build a 3D Gaussian Renderer  
