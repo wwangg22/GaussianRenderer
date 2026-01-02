@@ -21,4 +21,5 @@ target_link_libraries(RENDER_LIBRARY
     UTILS_LIBRARY
     SCENE_LIBRARY
     MATH_LIBRARY
+    cuda_kernels
 )

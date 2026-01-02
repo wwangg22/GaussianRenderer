@@ -37,13 +37,20 @@ public:
     void init();
     void draw(float* pixel_out);
     void onResize(int fbW, int fbH);
+    void loadGaussians(const std::string& filename);
     void MouseCallback(GLFWwindow* window, int button, int action, int mods);
     void CursorPosCallback(GLFWwindow* window, double xpos, double ypos);
     void ScrollCallback(GLFWwindow* window, double xoffset, double yoffset);
+    void dropFileCallback(GLFWwindow* win, int count, const char** paths);
+    void render();
 
 private:
+    Gaussian * gaussians;
+    int numGaussians;
     unsigned int VBO;
     unsigned int VAO;
+
+    float k;
 
     Vertex quad[6];
     unsigned int vertexShader;

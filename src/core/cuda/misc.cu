@@ -102,11 +102,6 @@ Gaussian *loadGaussianCudaFromPly(const std::string& filename, int* out_numGauss
             }
 
             h_gaussians[i] = g;
-
-            if (i < 10){
-                std::cout << "\nGaussian " << i << ": "
-                        << g.x << ", " << g.y << ", " << g.z;
-            }
         }
 
         Gaussian* cuda_gaussians = nullptr;

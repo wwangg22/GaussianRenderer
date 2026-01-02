@@ -35,25 +35,23 @@ int main(int argc, char* argv[]){
     std::string filename = argv[1];
     int numGaussians = 0;
     // std::vector<Gaussian> gaussians = loadGaussiansFromPly(filename);
-    Gaussian * d_gaussians = loadGaussianCudaFromPly(filename, &numGaussians); //this is cuda pointer
-    if (d_gaussians == nullptr) {
-        std::cerr << "Failed to load gaussians from PLY file: " << filename << std::endl;
-        return 1;
-    }
-    std::cout << "Loaded " << numGaussians << " gaussians from " << filename << std::endl;
+    // Gaussian * d_gaussians = loadGaussianCudaFromPly(filename, &numGaussians); //this is cuda pointer
+    // if (d_gaussians == nullptr) {
+    //     std::cerr << "Failed to load gaussians from PLY file: " << filename << std::endl;
+    //     return 1;
+    // }
+    // std::cout << "Loaded " << numGaussians << " gaussians from " << filename << std::endl;
     int num_tile_x = 50;
     int num_tile_y = 50;
     Canvas canvas(height, width, num_tile_x, num_tile_y);
     canvas.cam = &cam;
     canvas.init();
+    canvas.loadGaussians(filename);
     
 
     while (true) {
         auto t0 = std::chrono::high_resolution_clock::now();
-        preprocessCUDAGaussians(d_gaussians, canvas.d_out_pixels.data(), numGaussians, cam, 
-                canvas.tile_info.num_tile_y, canvas.tile_info.num_tile_x, canvas.tile_info.width_stride,
-                canvas.tile_info.height_stride, canvas.tile_info.W, canvas.tile_info.H, 1.5f);
-        canvas.draw(canvas.d_out_pixels.data());
+        canvas.render();
         auto t1 = std::chrono::high_resolution_clock::now();
         double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
 
@@ -65,8 +63,6 @@ int main(int argc, char* argv[]){
         }
     }
  
-    cudaFree(d_gaussians);
-
 
     return 0;
 }

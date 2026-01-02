@@ -3,16 +3,25 @@
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
+#include "misc.cuh"
+#include "render.cuh"
 
 Canvas::Canvas(int height_, int width_, int tile_x, int tile_y): width(width_), height(height_), 
     window(nullptr, glfwDestroyWindow), d_out_pixels(height_ * width_ * 3), 
-    tile_info(tile_x, tile_y, height_, width_), initial_cap(width_*height_) {
+    tile_info(tile_x, tile_y, height_, width_), initial_cap(width_*height_), gaussians(nullptr), numGaussians(0), k(0.0f) {
     // Initialize canvas with tiling info
 };
 Canvas::~Canvas() {
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
+
+    if (this->gaussians) {
+        cudaDeviceSynchronize();
+        cudaFree(this->gaussians);
+        this->gaussians = nullptr;
+        this->numGaussians = 0;
+    }
 };
 void Canvas::init() {
     if (!glfwInit()) {
@@ -158,16 +167,26 @@ void Canvas::init() {
         canvas->ScrollCallback(window, xoffset, yoffset);
     });
 
+    glfwSetDropCallback(this->window.get(), [](GLFWwindow* win, int count, const char** paths) {
+        Canvas* canvas = static_cast<Canvas*>(glfwGetWindowUserPointer(win));
+        if (!canvas) {
+            std::cerr << "Error: Canvas pointer is null in ScrollCallback\n";
+            return;
+        }
+        canvas->dropFileCallback(win, count, paths);
+    });
+
     //setup imgui
     // Setup Dear ImGui context
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io= ImGui::GetIO();
+    ImGuiStyle& style = ImGui::GetStyle();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
 
     // Setup Platform/Renderer backends
-    ImGui_ImplGlfw_InitForOpenGL(this->window.get(), true);          // Second param install_callback=true will install GLFW callbacks and chain to existing ones.
+    ImGui_ImplGlfw_InitForOpenGL(this->window.get(), false);          // Second param install_callback=true will install GLFW callbacks and chain to existing ones.
     ImGui_ImplOpenGL3_Init();
     
     this->settings.num_tile_x = this->tile_info.num_tile_x;
@@ -205,6 +224,11 @@ void Canvas::onResize(int fbW, int fbH) {
 }
 
 void Canvas::CursorPosCallback(GLFWwindow* window, double xpos, double ypos) {
+    ImGui_ImplGlfw_CursorPosCallback(window, xpos, ypos);
+    if (ImGui::GetIO().WantCaptureMouse) {
+        this->controls.dragging = false;
+        return;
+    }
     // Handle cursor position callback
     if (!this->controls.dragging) return;
     if (!this->cam) return;   // no camera attached → nothing to orbit
@@ -222,6 +246,8 @@ void Canvas::CursorPosCallback(GLFWwindow* window, double xpos, double ypos) {
     this->cam->orbit(dAzimuth, dElevation);
 }
 void Canvas::ScrollCallback(GLFWwindow* window, double xoffset, double yoffset) {
+    ImGui_ImplGlfw_ScrollCallback(window, xoffset, yoffset);
+    if (ImGui::GetIO().WantCaptureMouse) return;
     if (!this->cam) return;
 
     // yoffset > 0 : scroll up
@@ -236,6 +262,11 @@ void Canvas::ScrollCallback(GLFWwindow* window, double xoffset, double yoffset) 
     //           << " -> zoomDelta=" << zoomDelta << "\n";
 }
 void Canvas::MouseCallback(GLFWwindow* window, int button, int action, int mods) {
+    ImGui_ImplGlfw_MouseButtonCallback(window, button, action, mods);
+    if (ImGui::GetIO().WantCaptureMouse) {
+        if (action == GLFW_PRESS) this->controls.dragging = false;
+        return;
+    }
     // Handle mouse button callback
     if (button == GLFW_MOUSE_BUTTON_LEFT) {
         if (action == GLFW_PRESS) {
@@ -246,19 +277,40 @@ void Canvas::MouseCallback(GLFWwindow* window, int button, int action, int mods)
         }
     }
 }
+void Canvas::dropFileCallback(GLFWwindow* win, int count, const char** paths) {
+    int indx = count-1; // we will use the last path
+    this->loadGaussians(paths[indx]);
+};
+
+void Canvas::loadGaussians(const std::string& filename) {
+    if (this->gaussians) {
+        cudaDeviceSynchronize();
+        cudaFree(this->gaussians);
+        this->gaussians = nullptr;
+        this->numGaussians = 0;
+    }
+    this->gaussians = loadGaussianCudaFromPly(filename, &this->numGaussians);
+    if (this->gaussians == nullptr) {
+        std::cerr << "Failed to load gaussians from PLY file: " << filename << std::endl;
+    }
+};
 
 void Canvas::debugWindow() {
+    ImGui::SetNextWindowSize(ImVec2(500, 500), ImGuiCond_FirstUseEver); //ImGuiCond_Always);
     ImGui::Begin("Settings", &settings.show_settings);
+
 
     // Renderer-ish
     ImGui::Checkbox("Flip Y", &settings.flip);
-    ImGui::SliderFloat("k-sigma (splat radius)", &settings.k_sigma, 0.1f, 8.0f, "%.2f");
+    ImGui::SliderFloat("k-sigma (splat radius)", &this->k, 0.1f, 8.0f, "%.2f");
 
 
     // Controls
 
     if (ImGui::SliderFloat("fovY", &settings.fov, 75.0f, 120.0f, "%.2f")) {
         this->cam->setFovY(settings.fov);
+        this->cam->updateCameraMatrices();
+        this->cam->updateFrustumPlanes();
     };
 
 
@@ -280,6 +332,13 @@ void Canvas::debugWindow() {
     }
 
     ImGui::End();
+};
+
+void Canvas::render() {
+    preprocessCUDAGaussians(this->gaussians, this->d_out_pixels.data(), this->numGaussians, *(this->cam), 
+                this->tile_info.num_tile_y, this->tile_info.num_tile_x, this->tile_info.width_stride,
+                this->tile_info.height_stride, this->tile_info.W, this->tile_info.H, k);
+    this->draw(this->d_out_pixels.data());
 };
 
 void Canvas::draw(float* pixel_out) {

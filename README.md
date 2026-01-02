@@ -17,6 +17,8 @@ This project focuses on building a high-performance Gaussian Renderer with suppo
 - [ ] Add streaming training process
 
 ---
+## DEMO
+🎥 [Watch the demo video] (https://github.com/wwangg22/GaussianRenderer/releases/download/demo_videos/demo_1_2_splat.mp4)
 
 ## OVERALL Objectives
 - [ ] Build a 3D Gaussian Renderer  
